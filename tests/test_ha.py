@@ -4,11 +4,13 @@ import unittest
 import support  # noqa: F401
 from air96_ha import (
     HomeAssistantError,
+    light_is_on,
     prepare_token,
     resolve_token,
     sanitize_token,
     send,
     service_request,
+    state_request,
     turn_on_payload,
 )
 
@@ -31,10 +33,12 @@ class FakeResponse:
 
 class HaTests(unittest.TestCase):
     def test_payload_uses_rgb_and_not_the_token(self):
-        payload = turn_on_payload(["light.desk", "light.room"], "#7aa2f7", 180)
+        payload = turn_on_payload(["light.desk", "light.room"], "#7aa2f7")
         self.assertEqual(payload["entity_id"], ["light.desk", "light.room"])
         self.assertEqual(payload["rgb_color"], [0x7a, 0xa2, 0xf7])
-        self.assertEqual(payload["brightness"], 180)
+        self.assertNotIn("brightness", payload)
+        explicit = turn_on_payload(["light.desk"], "#7aa2f7", 180)
+        self.assertEqual(explicit["brightness"], 180)
         prepared = service_request("http://homeassistant.local:8123/", "a-real-token-value", payload)
         self.assertEqual(prepared["url"], "http://homeassistant.local:8123/api/services/light/turn_on")
         self.assertTrue(prepared["headers"]["Authorization"].startswith("Bearer "))
@@ -109,6 +113,49 @@ class HaTests(unittest.TestCase):
             resolve_token({}, "HA_TOKEN", str(path.parent / "missing-token"))
         self.assertIn("unreadable", str(unreadable.exception))
         self.assertNotIn(secret, str(unreadable.exception))
+
+    def test_color_push_omits_brightness_and_an_off_light_is_not_on(self):
+        self.assertFalse(light_is_on('{"state": "off", "attributes": {"brightness": 180}}'))
+        self.assertTrue(light_is_on({"state": "on", "attributes": {"brightness": 40}}))
+        self.assertFalse(light_is_on({"state": "unavailable"}))
+        with self.assertRaises(HomeAssistantError):
+            light_is_on("[]")
+        captured = {}
+
+        def opener(request, timeout):
+            captured["method"] = request.get_method()
+            captured["url"] = request.full_url
+            captured["auth"] = request.get_header("Authorization")
+            return FakeResponse()
+
+        prepared = state_request("http://ha.example", "from-env-token", "light.floor_lamp_66fa")
+        send(prepared, opener=opener, timeout=2)
+        self.assertEqual(captured["method"], "GET")
+        self.assertEqual(captured["url"], "http://ha.example/api/states/light.floor_lamp_66fa")
+        self.assertNotIn("from-env-token", captured["url"])
+        self.assertIn("from-env-token", captured["auth"])
+
+        class LongState:
+            status = 200
+
+            def read(self, limit):
+                self.limit = limit
+                payload = json.dumps({
+                    "state": "off",
+                    "attributes": {"friendly_name": "floor lamp", "effect_list": ["x" * 800]},
+                }).encode()
+                return payload[:limit]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        long_state = LongState()
+        result = send(prepared, opener=lambda _request, timeout: long_state, timeout=2)
+        self.assertGreater(long_state.limit, 1000)
+        self.assertFalse(light_is_on(result["body"]))
 
     def _token_file(self, text):
         import tempfile

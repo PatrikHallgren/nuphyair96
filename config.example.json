@@ -13,7 +13,9 @@
     "token_env": "HA_TOKEN",
     "token_file": "",
     "token": "",
-    "entities": ["light.desk"]
+    "entities": ["light.desk"],
+    "sync_brightness": false,
+    "only_when_on": true
   },
   "modifiers": {
     "enabled": false

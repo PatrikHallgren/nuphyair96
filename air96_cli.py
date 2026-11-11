@@ -104,10 +104,13 @@ def command_ha_token(backend, args):
 def command_ha_test(backend, _args):
     with file_lock(backend.state_dir):
         result = backend.push_home_assistant()
+    if result.get("skipped"):
+        print(backend.message)
+        return 0
     print(f"Home Assistant returned HTTP {result['status']}")
     body = (result.get("body") or "").strip()
     if body:
-        print(body)
+        print(body[:400])
     return 0
 
 

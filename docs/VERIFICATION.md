@@ -11,7 +11,7 @@ No Air96, no Omarchy install, and no Quickshell were available in the environmen
 | Theme | `colors.toml` accent, comments, quotes, and `keyboard.rgb` with or without `#`. A bare `ff00ff` wins over the accent. |
 | Binds | `hyprctl binds -j` and `bind` / `bindd` lines, XKB `code:` keys, submaps, idle Super keys versus a held mask. Evdev bytes update only Shift, Ctrl, Alt, and Super. |
 | Profiles | Shipped Firefox, Code, and Minecraft matches. A user file with the same id overrides. VS Code import keeps the first chord. |
-| Home Assistant | `light.turn_on` body, entity and URL checks, token resolution. Paste markers are stripped. Missing, malformed, and unreadable tokens are different errors, and the token text is not in the message or the body. |
+| Home Assistant | `light.turn_on` sends `rgb_color` and omits brightness unless `sync_brightness` is on. `only_when_on` reads `GET /api/states/<entity>` and skips lights that are not on. Token resolution strips paste markers. Missing, malformed, and unreadable tokens are different errors, and the token text is not in the message or the body. |
 | Protocol | 100 keys, LED indexes, VIA lighting packets, HSV, keymap offsets, the per-key probe, the 9-LED packet split, clear, and the timeout model. |
 | Music | Synthetic PCM through the FFT, column and VU color mapping, and a stock VIA pulse that does not bump the EEPROM save counter. |
 | Backend | Theme follow sends solid color and skips a duplicate save. Follow off does not write. Snapshot omits the token. Stock probe refuses per-key. A fake custom ack stores a frame. Keymap apply conflicts leave the keyboard unchanged. |
