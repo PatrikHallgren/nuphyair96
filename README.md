@@ -40,7 +40,7 @@ python3 air96_cli.py doctor
 python3 air96_cli.py panel
 ```
 
-`panel` toggles the popup with `omarchy-shell air96 toggle`. That target exists only after the bar has instantiated the widget. `doctor` prints the plugin path, the files, whether `shell.json` lists the widget, and the slot from `omarchy-shell shell debugBarGeometry` (width, height, visible). If the icon is still missing, the QML warnings are in the shell journal:
+Click `K A96`, or run `panel`. Both open the popup. `panel` calls `omarchy-shell air96 toggle`. On more than one monitor that command opens the popup on the focused screen; a click opens the copy on the bar that was clicked. `doctor` prints the plugin path, the files, whether `shell.json` lists the widget, and the slot from `omarchy-shell shell debugBarGeometry` (width, height, visible). If the popup file fails to load, the click still opens a card with the QML error. Shell warnings are in the journal:
 
 ```sh
 journalctl --user -t omarchy-shell -n 200 --no-pager

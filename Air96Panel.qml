@@ -28,32 +28,43 @@ Panel {
     content: Item {
       id: page
       property var editorService: root.service
+      property string editorError: ""
       readonly property real preferredWidth: Style.space(760)
       implicitWidth: preferredWidth
-      implicitHeight: editor.item ? editor.item.implicitHeight : Style.space(240)
+      implicitHeight: editor.item ? editor.item.implicitHeight : Math.max(Style.space(180), errorText.implicitHeight + Style.space(24))
 
-      onEditorServiceChanged: if (editor.item) editor.item.service = editorService
+      function applyService() {
+        if (editor.item) editor.item.service = editorService
+      }
+
+      onEditorServiceChanged: applyService()
 
       Loader {
         id: editor
         anchors.left: parent.left
         anchors.right: parent.right
-        onLoaded: if (item) item.service = page.editorService
-        onStatusChanged: if (status === Loader.Error) console.warn("Air96 editor failed to load")
+        onLoaded: page.applyService()
+        onStatusChanged: {
+          if (status !== Loader.Error) return
+          var detail = ""
+          if (sourceComponent && sourceComponent.errorString) detail = sourceComponent.errorString()
+          page.editorError = detail || "The Air96 editor failed to load."
+          console.warn(page.editorError)
+        }
       }
 
       Component.onCompleted: editor.setSource(Qt.resolvedUrl("Editor.qml"), { service: page.editorService })
-      onEditorServiceChanged: if (editor.item) editor.item.service = editorService
 
       Text {
-        anchors.fill: parent
+        id: errorText
+        width: parent.width
         visible: editor.status === Loader.Error
         wrapMode: Text.WordWrap
         textFormat: Text.PlainText
         color: Color.urgent
         font.family: Style.font.family
         font.pixelSize: Style.font.body
-        text: "The Air96 panel did not load. journalctl --user -t omarchy-shell -n 200 --no-pager"
+        text: page.editorError
       }
     }
   }
