@@ -29,18 +29,22 @@ Bar plugin as well. `./install.sh` with no arguments links this checkout to `~/.
 
 ```sh
 ./install.sh
-omarchy plugin enable local.nuphy-air96
+omarchy plugin enable local.nuphy-air96 --section right
+omarchy-restart-shell
 ```
 
-If Omarchy had copied the plugin into that directory, the copy is moved to `local.nuphy-air96.previous` and replaced with the link. `git pull` in this checkout is then what the bar runs. `./install.sh` runs `omarchy-shell shell rescanPlugins` and `omarchy plugin enable local.nuphy-air96 --yes` when those commands exist. Restart the shell if the icon is still missing:
+`omarchy plugin enable` takes a placement (`--section right`), not `--yes`. `./install.sh` runs `omarchy-shell shell rescanPlugins`, then that enable command, then `omarchy-restart-shell`. The restart is what loads the widget. `listPlugins` can say the plugin is enabled before the icon exists.
 
 ```sh
-omarchy-restart-shell
 python3 air96_cli.py doctor
 python3 air96_cli.py panel
 ```
 
-`panel` toggles the popup with `omarchy-shell air96 toggle`. That target exists only after the icon has loaded. `doctor` prints the plugin path, which files are there, whether `shell.json` lists the widget, and what `listPlugins` says.
+`panel` toggles the popup with `omarchy-shell air96 toggle`. That target exists only after the bar has instantiated the widget. `doctor` prints the plugin path, the files, whether `shell.json` lists the widget, and the slot from `omarchy-shell shell debugBarGeometry` (width, height, visible). If the icon is still missing, the QML warnings are in the shell journal:
+
+```sh
+journalctl --user -t omarchy-shell -n 200 --no-pager
+```
 
 From Omarchy, without a separate checkout:
 
@@ -205,7 +209,7 @@ The QML panel was not launched here. If the bar icon fails to load, the Python C
 
 | Path | Role |
 | --- | --- |
-| `manifest.json`, `Service.qml`, `Widget.qml`, `Editor.qml` | Omarchy service and bar panel |
+| `manifest.json`, `Service.qml`, `Widget.qml`, `Air96Panel.qml`, `Editor.qml` | Omarchy service and bar panel |
 | `air96_worker.py` | Long-running NDJSON process |
 | `air96_cli.py` | `status`, `devices`, `sync`, `apply`, `screensaver`, `doctor`, `panel`, `ha-token`, `ha-test` |
 | `air96_protocol.py`, `air96_hid.py`, `air96_layout.py` | VIA packets, hidraw discovery, 100-key map |
