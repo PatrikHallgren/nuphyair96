@@ -355,14 +355,17 @@ def drive_lights(backend, session, state, now):
         return
     if state["music"]:
         session.stop()
-        state["music"] = False
         try:
             with file_lock(backend.state_dir):
                 backend.release_overlay()
-        except (ProtocolError, OSError, HidError, TimeoutError) as exc:
+        except (ProtocolError, OSError, HidError, TimeoutError, ValueError) as exc:
+            # Stay in the music-off attempt. Marking it finished here is what
+            # left the overlay cleared and the highlight loop not running.
             backend.error = str(exc)[:300]
-        state["push"] = pushing
-        return
+            state["push"] = pushing
+            return
+        state["music"] = False
+        state["last_mods"] = 0
     if state["push"] and not pushing and backend.frame_kind == "highlight":
         try:
             with file_lock(backend.state_dir):
@@ -383,7 +386,10 @@ def drive_lights(backend, session, state, now):
                 pushed = True
             except (ProtocolError, OSError, HidError, TimeoutError) as exc:
                 backend.error = str(exc)[:300]
-    if pushing and not pushed and now - backend.last_direct >= 0.9:
+    # frame_kind stays "music" or "" when the restore did not paint. Do not
+    # wait out the 0.9s keepalive; that gap is long enough for the overlay
+    # timeout to drop Super and not put it back.
+    if pushing and not pushed and (backend.frame_kind != "highlight" or now - backend.last_direct >= 0.9):
         try:
             with file_lock(backend.state_dir):
                 backend.push_per_key()

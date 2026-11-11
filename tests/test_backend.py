@@ -177,6 +177,93 @@ class BackendTests(BackendCase):
         self.assertNotIn(0xA8, self.keyboard.commands)
         self.assertGreater(len(self.keyboard.frames), 0)
 
+    def test_music_frame_covers_every_key_not_only_the_left_third(self):
+        self.connect(per_key=True)
+        dark = {"rms": 0.0, "bands": [0.0] * 16, "bass": 0.0, "highs": 0.0, "loudness": 0.0}
+        self.backend.push_music(dark)
+        self.assertEqual(self.backend.last_led_count, 100)
+        self.assertEqual(self.backend.last_led_index, 99)
+        self.keyboard.frames.clear()
+        hot = [0.0] * 16
+        hot[-1] = 1.0
+        self.backend.push_music({"rms": 1.0, "bands": hot, "bass": 1.0, "highs": 1.0, "loudness": 1.0})
+        right = next(key for key in KEYS if key["id"] == "kp_enter")
+        left = min(KEYS, key=lambda key: key["x"])
+        self.assertGreater(self.keyboard.colors[right["led"]][0], 200)
+        self.assertLess(self.keyboard.colors[left["led"]][0], 30)
+        self.assertGreaterEqual(self.backend.last_led_index, right["led"])
+        self.assertGreater(self.backend.last_led_count, 0)
+        self.assertLess(self.backend.last_led_count, 100)
+        self.assertTrue(any(
+            frame[1] <= right["led"] < frame[1] + frame[2] for frame in self.keyboard.frames
+        ))
+
+    def test_music_off_restores_highlights_without_clearing_or_saving(self):
+        from air96_audio import MusicSession
+        from air96_worker import drive_lights
+
+        self.connect(per_key=True)
+        self.backend.binds = [{
+            "key": "q", "modmask": 64, "submap": "", "label": "Close", "dispatcher": "killactive", "arg": "",
+        }]
+        self.backend.update_settings({
+            "music": {"enabled": True},
+            "per_key": {"push_to_keyboard": True},
+        })
+        self.backend.push_music({"rms": 0.8, "bands": [1.0] + [0.0] * 15, "bass": 1.0, "highs": 0.0})
+        self.assertEqual(self.backend.frame_kind, "music")
+        saved = self.keyboard.saved
+        self.keyboard.commands.clear()
+        self.keyboard.frames.clear()
+        self.backend.update_settings({"music": {"enabled": False}})
+        state = {"music": True, "push": True, "last_music": 0.0, "retry": 0.0}
+        drive_lights(self.backend, MusicSession(), state, 10.0)
+        self.assertFalse(state["music"])
+        self.assertTrue(self.backend.config["per_key"]["push_to_keyboard"])
+        self.assertNotIn(0xA8, self.keyboard.commands)
+        self.assertEqual(self.keyboard.saved, saved)
+        self.assertEqual(self.backend.frame_kind, "highlight")
+        q = next(key for key in KEYS if key["id"] == "q")
+        other = next(key for key in KEYS if key["id"] == "z")
+        self.assertGreater(self.keyboard.colors[q["led"]][0], self.keyboard.colors[other["led"]][0] + 80)
+
+        self.keyboard.hypr_mods = 64
+        drive_lights(self.backend, MusicSession(), state, 11.0)
+        self.assertEqual(self.backend.held, 64)
+        self.assertEqual(self.backend.frame_kind, "highlight")
+        self.assertGreater(self.keyboard.colors[q["led"]][0], 200)
+        self.assertNotIn(0xA8, self.keyboard.commands)
+
+    def test_music_off_retries_when_the_highlight_push_fails(self):
+        from air96_audio import MusicSession
+        from air96_worker import drive_lights
+
+        self.connect(per_key=True)
+        self.backend.binds = [{
+            "key": "q", "modmask": 64, "submap": "", "label": "Close", "dispatcher": "killactive", "arg": "",
+        }]
+        self.backend.update_settings({"music": {"enabled": False}, "per_key": {"push_to_keyboard": True}})
+        self.backend.frame_kind = "music"
+        state = {"music": True, "push": True, "last_music": 0.0, "retry": 0.0}
+        original = self.keyboard.transact
+        failed = {"count": 0}
+
+        def flaky(payload):
+            if payload and payload[0] == 0xA7 and failed["count"] < 1:
+                failed["count"] += 1
+                raise TimeoutError("keyboard busy")
+            return original(payload)
+
+        self.keyboard.transact = flaky
+        drive_lights(self.backend, MusicSession(), state, 20.0)
+        self.assertTrue(state["music"])
+        self.assertNotEqual(self.backend.frame_kind, "highlight")
+        drive_lights(self.backend, MusicSession(), state, 21.0)
+        self.assertFalse(state["music"])
+        self.assertEqual(self.backend.frame_kind, "highlight")
+        self.assertNotIn(0xA8, self.keyboard.commands)
+        self.assertTrue(self.backend.config["per_key"]["push_to_keyboard"])
+
     def test_stock_music_pulse_is_not_saved(self):
         self.connect(per_key=False)
         samples = [0.6 * math.sin(2 * math.pi * 80 * i / 16000) for i in range(512)]

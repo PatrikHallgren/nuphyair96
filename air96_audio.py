@@ -110,22 +110,30 @@ def analyze(samples, rate=RATE, bands=BANDS):
     for index in range(bands):
         start = edges[index]
         end = edges[index + 1]
-        energy = 0.0
+        # Peak bin, not the mean. Log bands get wider toward the treble, so an
+        # average shrinks every high band and paints a left-to-right ramp.
+        peak = 0.0
         bins = 0
         for bin_index, magnitude in enumerate(magnitudes):
             frequency = bin_index * rate / size
             if frequency < start or frequency >= end:
                 continue
-            energy += magnitude
+            if magnitude > peak:
+                peak = magnitude
             bins += 1
-        values.append(energy / bins if bins else 0.0)
+        values.append(peak if bins else 0.0)
     bass = sum(values[:3]) / 3 if values else 0.0
     highs = sum(values[-3:]) / 3 if values else 0.0
     return {"rms": level, "bands": values, "bass": bass, "highs": highs}
 
 
 class Envelope:
-    """Fast attack, slow decay, a noise gate, and a slow loudness follower.
+    """Fast attack, slow decay, a noise gate, and per-band automatic gain.
+
+    One global gain keeps a bass-heavy spectrum bass-heavy: the left columns
+    stay bright and the right columns never reach full scale. Each band is
+    scaled to its own recent peak, then a floor drops bands that are just
+    leakage or silence. Loudness is still global, so a quiet room stays dark.
 
     nuphy-rgb-music decays each frame (about 0.97 at 30 fps) so a beat has a
     tail. This HID path cannot repaint every LED that often, so the tail is
@@ -137,7 +145,11 @@ class Envelope:
         self.decay = decay
         self.open_at = open_at
         self.close_at = close_at
-        self.gain = 0.05
+        self.relative_floor = 0.04
+        self.absolute_floor = 1e-5
+        # Start at the floor. A 0.05 seed made a real but quiet band look dim
+        # until the seed decayed, so treble columns never caught the bass.
+        self.peaks = [self.absolute_floor] * BANDS
         self.loud = 0.0
         self.open = False
         self.level = 0.0
@@ -155,15 +167,22 @@ class Envelope:
         incoming = incoming[:BANDS]
         if not self.open:
             incoming = [0.0] * BANDS
-            peak = 0.0
-        else:
-            peak = max(incoming) if incoming else 0.0
-            if peak > self.gain:
-                self.gain = self.gain * 0.6 + peak * 0.4
+        global_peak = max(incoming) if incoming else 0.0
+        floor = max(self.absolute_floor, global_peak * self.relative_floor)
+        target = []
+        for index, value in enumerate(incoming):
+            if not self.open or value < floor:
+                self.peaks[index] = max(self.absolute_floor, self.peaks[index] * 0.995)
+                target.append(0.0)
+                continue
+            peak = self.peaks[index]
+            if value > peak:
+                peak = peak * 0.4 + value * 0.6
             else:
-                self.gain = self.gain * 0.995 + peak * 0.005
-            self.gain = max(self.gain, 1e-4)
-        target = [min(1.0, value / self.gain) for value in incoming] if self.open else [0.0] * BANDS
+                peak = peak * 0.995 + value * 0.005
+            peak = max(peak, self.absolute_floor)
+            self.peaks[index] = peak
+            target.append(min(1.0, value / peak))
         rising = (max(target) if target else 0.0) >= self.level
         keep = (1.0 - self.attack) if rising else self.decay
         take = 1.0 - keep
@@ -209,15 +228,15 @@ def frame_colors(levels, effect, tint, keys=None):
         for key in keys:
             colors[key["led"]] = color
         return colors
-    span = max(key["x"] + key["w"] for key in keys)
+    span = max(key["x"] + key["w"] for key in keys) or 1
     last = len(bands) - 1
-    bass = max(0.0, min(1.0, float(levels.get("bass") or 0.0)))
     for key in keys:
         center = key["x"] + key["w"] / 2
+        # The rightmost center can equal the span. Keep it on the last band.
         index = min(last, int(center / span * len(bands)))
+        if index < 0:
+            index = 0
         amount = bands[index]
-        if center < span * 0.28:
-            amount = max(amount, bass)
         colors[key["led"]] = _tint(tint, max(0.0, min(1.0, amount)))
     return colors
 

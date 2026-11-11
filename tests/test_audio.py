@@ -70,10 +70,59 @@ class AudioTests(unittest.TestCase):
         for _ in range(12):
             levels = env.update(low)
         colors = frame_colors(levels, "spectrum", "#ffffff")
+        span = max(key["x"] + key["w"] for key in KEYS) or 1
+
+        def column_band(key):
+            center = key["x"] + key["w"] / 2
+            return min(len(levels["bands"]) - 1, int(center / span * len(levels["bands"])))
+
+        peak = levels["bands"].index(max(levels["bands"]))
+        lit = [key for key in KEYS if column_band(key) == peak]
+        far = [key for key in KEYS if abs(column_band(key) - peak) >= 6]
+        self.assertTrue(lit and far)
+        self.assertGreater(max(colors[key["led"]][0] for key in lit), 80)
+        self.assertLess(max(colors[key["led"]][0] for key in far), 25)
+
+    def test_each_band_reaches_full_scale_and_the_right_side_lights(self):
+        env = Envelope()
+        levels = None
+        raw = [0.0] * 16
+        raw[0] = 0.5
+        raw[-1] = 0.05
+        for _ in range(24):
+            levels = env.update({"rms": 0.3, "bands": raw})
+        self.assertGreater(levels["bands"][0], 0.5)
+        self.assertGreater(levels["bands"][-1], 0.5)
+        colors = frame_colors(levels, "spectrum", "#ffffff")
         left = min(KEYS, key=lambda key: key["x"])
         right = max(KEYS, key=lambda key: key["x"] + key["w"])
         self.assertGreater(colors[left["led"]][0], 80)
-        self.assertLess(colors[right["led"]][0], 25)
+        self.assertGreater(colors[right["led"]][0], 80)
+
+    def test_bass_does_not_paint_the_left_third_when_only_the_top_band_is_hot(self):
+        bands = [0.0] * 16
+        bands[-1] = 1.0
+        colors = frame_colors(
+            {"rms": 1.0, "bands": bands, "bass": 1.0, "highs": 1.0},
+            "spectrum",
+            "#ffffff",
+        )
+        span = max(key["x"] + key["w"] for key in KEYS)
+        left = [key for key in KEYS if key["x"] + key["w"] / 2 < span * 0.28]
+        right = max(KEYS, key=lambda key: key["x"] + key["w"])
+        self.assertTrue(left)
+        self.assertLess(max(colors[key["led"]][0] for key in left), 30)
+        self.assertGreater(colors[right["led"]][0], 200)
+
+    def test_silence_stays_dark_after_a_loud_frame(self):
+        env = Envelope()
+        for _ in range(6):
+            env.update({"rms": 0.5, "bands": [0.8] * 16})
+        silent = None
+        for _ in range(24):
+            silent = env.update({"rms": 0.0, "bands": [0.2] * 16})
+        self.assertTrue(silent["silent"])
+        self.assertLess(max(silent["bands"]), 0.05)
 
     def test_recorder_targets_the_speaker_monitor_not_the_microphone(self):
         def which(name):
@@ -142,10 +191,11 @@ class AudioTests(unittest.TestCase):
         self.assertTrue(capture.stalled)
         self.assertGreater(capture.bytes_total, 0)
 
-        colors = frame_colors({"rms": 0.2, "bands": [0.05] * 16, "bass": 1.0}, "spectrum", "#ff0000")
+        colors = frame_colors({"rms": 0.2, "bands": [0.4] * 16, "bass": 1.0}, "spectrum", "#ff0000")
         left = min(KEYS, key=lambda key: key["x"])
         right = max(KEYS, key=lambda key: key["x"] + key["w"])
-        self.assertGreater(colors[left["led"]][0], colors[right["led"]][0] + 80)
+        self.assertGreater(colors[left["led"]][0], 80)
+        self.assertEqual(colors[left["led"]], colors[right["led"]])
 
     def test_via_pulse_tracks_level_inside_a_byte(self):
         quiet = via_pulse({"rms": 0, "bands": [0] * 16}, "#3366ff", 200)
