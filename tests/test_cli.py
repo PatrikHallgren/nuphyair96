@@ -83,7 +83,7 @@ class CliTests(unittest.TestCase):
                 main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         text = stdout.getvalue()
-        for name in ("status", "devices", "sync", "apply", "screensaver", "ha-token", "ha-test"):
+        for name in ("status", "devices", "sync", "apply", "screensaver", "doctor", "panel", "ha-token", "ha-test"):
             self.assertIn(name, text)
         self.assertIn("--debug", text)
         with redirect_stderr(stderr):
@@ -151,6 +151,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         saved = json.loads((self.root / "config.json").read_text())
         self.assertFalse(saved["screensaver"]["enabled"])
+
+    def test_screensaver_test_restores_solid_color_without_saving(self):
+        code, out, err = self.run_main(["screensaver", "test", "--seconds", "0"], devices=[self.device])
+        self.assertEqual(code, 0, err)
+        self.assertIn("effect 5", out)
+        self.assertIn("153", out)
+        self.assertEqual(self.keyboard.effect, 1)
+        self.assertEqual(self.keyboard.saved, 0)
 
     def test_ha_token_sanitizes_and_ha_test_reports_status(self):
         secret = "long-lived-token-value"

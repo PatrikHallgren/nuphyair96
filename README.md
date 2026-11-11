@@ -25,14 +25,22 @@ python3 air96_cli.py apply --follow on
 
 The next theme change runs `air96_cli.py sync` from this checkout. `sync` does nothing until follow is on. The hook does not need the bar plugin.
 
-Bar plugin as well. `./install.sh` with no arguments links this checkout to `~/.config/omarchy/plugins/local.nuphy-air96` and restarts the bar worker:
+Bar plugin as well. `./install.sh` with no arguments links this checkout to `~/.config/omarchy/plugins/local.nuphy-air96`, restarts the bar worker, and asks Omarchy to put the icon on the right side of the bar. A link alone does not draw the icon. The icon appears when `local.nuphy-air96` is in `~/.config/omarchy/shell.json`.
 
 ```sh
 ./install.sh
 omarchy plugin enable local.nuphy-air96
 ```
 
-If Omarchy had copied the plugin into that directory, the copy is moved to `local.nuphy-air96.previous` and replaced with the link. `git pull` in this checkout is then what the bar runs. Restart the shell after enabling so Quickshell reloads the panel. The bar icon target is `omarchy-shell air96 toggle`.
+If Omarchy had copied the plugin into that directory, the copy is moved to `local.nuphy-air96.previous` and replaced with the link. `git pull` in this checkout is then what the bar runs. `./install.sh` runs `omarchy-shell shell rescanPlugins` and `omarchy plugin enable local.nuphy-air96 --yes` when those commands exist. Restart the shell if the icon is still missing:
+
+```sh
+omarchy-restart-shell
+python3 air96_cli.py doctor
+python3 air96_cli.py panel
+```
+
+`panel` toggles the popup with `omarchy-shell air96 toggle`. That target exists only after the icon has loaded. `doctor` prints the plugin path, which files are there, whether `shell.json` lists the widget, and what `listPlugins` says.
 
 From Omarchy, without a separate checkout:
 
@@ -96,7 +104,7 @@ python3 air96_cli.py --debug status
 
 `~/.config/omarchy-nuphy-air96/config.json` is created on first save, mode `0600`. [config.example.json](config.example.json) matches the defaults.
 
-A new config follows the theme. A file you already saved keeps its `follow_theme` value until you change it in the panel or with `apply --follow on`. Brightness is an integer 0–255. The keyboard effect is always solid (`1`) except while the screensaver light show is on, which uses Breathing (`4`) and does not write that effect to EEPROM.
+A new config follows the theme. A file you already saved keeps its `follow_theme` value until you change it in the panel or with `apply --follow on`. Brightness is an integer 0–255. The keyboard effect is always solid (`1`) except while the screensaver light show is on, which uses Breathing (`5`) and does not write that effect to EEPROM. An old saved `screensaver.effect` of `4` is read as `5`.
 
 State, including keymap backups, lives in `~/.local/state/omarchy-nuphy-air96/`.
 
@@ -159,7 +167,15 @@ python3 air96_cli.py screensaver on
 python3 air96_cli.py screensaver off
 ```
 
-The bar worker looks about once a second for a process whose command line contains `org.omarchy.screensaver`, `omarchy-screensaver`, or `omarchy-launch-screensaver`. It ignores its own `air96_` process. While that process is up and the switch is on, the keyboard uses Breathing in the current color. The effect is not written to EEPROM. When the screensaver exits, solid color is restored, also without a new EEPROM write. A crash or reboot therefore returns to the last saved solid color.
+The bar worker looks about once a second for a process whose command line contains `org.omarchy.screensaver`, `omarchy-screensaver`, or `omarchy-launch-screensaver`. It ignores its own `air96_` process. While that process is up and the switch is on, the keyboard uses Breathing. On the flashed Omarchy keymap that is effect 5, because Alphas Mods occupies index 2 and index 4 is only a left/right gradient. The live speed is 153, which is the firmware default, so a stored speed of 0 cannot freeze the pulse. Neither the effect nor that speed is written to EEPROM. When the screensaver exits, solid color and the saved speed return, also without a new EEPROM write. The worker does not paint solid color over the show. A crash or reboot therefore returns to the last saved solid color.
+
+To see the pulse without waiting for the screensaver:
+
+```sh
+python3 air96_cli.py screensaver test
+```
+
+That runs Breathing for 10 seconds and restores solid color. The bar worker is locked out for those 10 seconds so it cannot paint over the test.
 
 ## Tests
 
@@ -180,7 +196,7 @@ Use the USB cable.
 5. Point Home Assistant at one `light.*` entity and confirm an already-on light follows a successful color write without changing brightness. An off light stays off. Confirm `status` does not print the token.
 6. `./install.sh`, then `python3 air96_cli.py apply --follow on`. The whole board should match the theme, including after a theme switch and after the worker restarts. Brightness in the panel should change the board whether or not follow is on. With follow off, the chosen color should stick.
 7. Turn the lamp follow on in the panel and confirm `light.floor_lamp_66fa` takes the theme color without a brightness jump. Turn follow off, pick a color and a brightness, and confirm both. An off lamp stays off while "Only when the light is already on" is enabled.
-8. `python3 air96_cli.py screensaver on`, then start the screensaver (`omarchy-launch-screensaver`, or wait for hypridle). The board should breathe in the current color. Leave the screensaver and the board should return to solid. No reflash is part of this check.
+8. `python3 air96_cli.py screensaver test`. The whole board should pulse for about 10 seconds, then return to solid. No reflash. `python3 air96_cli.py screensaver on` does the same pulse while the Omarchy screensaver is running.
 9. Open the Keys tab. The picture is the Air96 layout. Click a key, search a keycode, Apply, and confirm the key. The plugin never resets EEPROM.
 
 The QML panel was not launched here. If the bar icon fails to load, the Python CLI still applies lighting and syncs the theme.
@@ -191,7 +207,7 @@ The QML panel was not launched here. If the bar icon fails to load, the Python C
 | --- | --- |
 | `manifest.json`, `Service.qml`, `Widget.qml`, `Editor.qml` | Omarchy service and bar panel |
 | `air96_worker.py` | Long-running NDJSON process |
-| `air96_cli.py` | `status`, `devices`, `sync`, `apply`, `screensaver`, `ha-token`, `ha-test` |
+| `air96_cli.py` | `status`, `devices`, `sync`, `apply`, `screensaver`, `doctor`, `panel`, `ha-token`, `ha-test` |
 | `air96_protocol.py`, `air96_hid.py`, `air96_layout.py` | VIA packets, hidraw discovery, 100-key map |
 | `install.sh` | Theme-set hook, plugin link, worker restart, and uninstall |
 | `udev/` | Seat ACL rules, not installed automatically |

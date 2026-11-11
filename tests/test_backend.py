@@ -139,7 +139,8 @@ class BackendTests(BackendCase):
         saved = self.keyboard.saved
         self.assertEqual(self.keyboard.effect, 1)
         self.backend.note_screensaver(True)
-        self.assertEqual(self.keyboard.effect, 4)
+        self.assertEqual(self.keyboard.effect, 5)
+        self.assertEqual(self.keyboard.speed, 153)
         self.assertEqual(self.keyboard.saved, saved)
         self.assertFalse(self.backend.note_screensaver(True))
         self.backend.note_screensaver(False)
@@ -155,14 +156,31 @@ class BackendTests(BackendCase):
         state = {"screen": 0.0}
         with patch("air96_worker.screensaver_running", return_value=True):
             drive_lights(self.backend, state, 10)
-        self.assertEqual(self.keyboard.effect, 4)
+        self.assertEqual(self.keyboard.effect, 5)
+        self.assertEqual(self.keyboard.speed, 153)
         self.assertEqual(self.keyboard.saved, saved)
         with patch("air96_worker.screensaver_running", return_value=False):
             drive_lights(self.backend, state, 10.2)
-            self.assertEqual(self.keyboard.effect, 4)
+            self.assertEqual(self.keyboard.effect, 5)
+            self.assertEqual(self.keyboard.speed, 153)
             drive_lights(self.backend, state, 12)
         self.assertEqual(self.keyboard.effect, 1)
         self.assertEqual(self.keyboard.saved, saved)
+
+    def test_old_effect_four_was_the_gradient_and_a_preview_is_not_saved(self):
+        loaded = validate_config({"screensaver": {"enabled": True, "effect": 4}})
+        self.assertEqual(loaded["screensaver"]["effect"], 5)
+        (self.theme / "keyboard.rgb").write_text("ff00ff\n")
+        self.connect()
+        self.backend.update_settings({"lighting": {"speed": 0}})
+        saved = self.keyboard.saved
+        shown = self.backend.preview_screensaver(0)
+        self.assertEqual(shown["effect"], 5)
+        self.assertEqual(shown["speed"], 153)
+        self.assertEqual(self.keyboard.effect, 1)
+        self.assertEqual(self.keyboard.speed, 0)
+        self.assertEqual(self.keyboard.saved, saved)
+        self.assertNotIn(0x09, self.keyboard.commands)
 
     def test_screensaver_process_scan_ignores_the_worker(self):
         self.assertTrue(command_is_screensaver("kitty --class org.omarchy.screensaver omarchy-screensaver"))

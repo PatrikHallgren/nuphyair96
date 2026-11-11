@@ -76,11 +76,57 @@ def command_apply(backend, args):
 
 
 def command_screensaver(backend, args):
+    if args.state == "test":
+        return command_screensaver_test(backend, args)
     enabled = args.state == "on"
     with file_lock(backend.state_dir):
         backend.update_settings({"screensaver": {"enabled": enabled}})
     print("Screensaver light show is on." if enabled else "Screensaver light show is off.")
-    print("The bar worker switches to Breathing while org.omarchy.screensaver is running, and restores solid color when it exits.")
+    print("The bar worker uses Breathing (effect 5, speed 153) while org.omarchy.screensaver is running.")
+    print("It restores solid color when the screensaver exits. The animation is not saved.")
+    return 0
+
+
+def command_screensaver_test(backend, args):
+    seconds = args.seconds
+    with file_lock(backend.state_dir, timeout=max(3, seconds + 2)):
+        refresh_device(backend)
+        if backend.transport is None:
+            print(backend.error or "Air96 is not connected over USB", file=sys.stderr)
+            return 1
+        shown = backend.preview_screensaver(seconds)
+    print(
+        f"Breathing effect {shown.get('effect')} at speed {shown.get('speed')} "
+        f"for {seconds:g} seconds. It was not saved."
+    )
+    print("Solid color is restored. Effect 5 is Breathing on the flashed keymap. Effect 4 is only a left/right gradient.")
+    if backend.error:
+        print(backend.error, file=sys.stderr)
+        return 1
+    return 0
+
+
+def command_doctor(_backend, args):
+    from air96_shell import doctor
+    report = doctor(register=args.register)
+    for line in report["lines"]:
+        print(line)
+    return 0 if report["ok"] else 1
+
+
+def command_panel(_backend, _args):
+    from air96_shell import doctor, open_panel
+    report = doctor(register=True)
+    for line in report["lines"]:
+        print(line)
+    code, lines = open_panel()
+    for line in lines:
+        if line:
+            print(line)
+    if code != 0:
+        return code
+    if not report["ok"]:
+        return 1
     return 0
 
 
@@ -134,10 +180,14 @@ def parser():
     apply.add_argument("--speed", type=int)
     apply.add_argument("--follow", type=lambda value: value.lower() in ("1", "true", "yes", "on"))
     screen = commands.add_parser("screensaver")
-    screen.add_argument("state", choices=("on", "off"))
+    screen.add_argument("state", choices=("on", "off", "test"))
+    screen.add_argument("--seconds", type=float, default=10)
     ha_token = commands.add_parser("ha-token", help="Prompt for a Home Assistant token and save it")
     ha_token.add_argument("--file", help="Token file to write. Defaults to the configured token_file or ha-token")
     commands.add_parser("ha-test", help="Push the current color once and print the HTTP status")
+    doctor = commands.add_parser("doctor", help="Print whether the bar plugin is installed and registered")
+    doctor.add_argument("--register", action="store_true", help="Ask Omarchy to rescan and enable the widget")
+    commands.add_parser("panel", help="Enable the bar widget if needed and toggle its popup")
     return program
 
 
@@ -151,6 +201,8 @@ def main(argv=None):
         "sync": command_sync,
         "apply": command_apply,
         "screensaver": command_screensaver,
+        "doctor": command_doctor,
+        "panel": command_panel,
         "ha-token": command_ha_token,
         "ha-test": command_ha_test,
     }

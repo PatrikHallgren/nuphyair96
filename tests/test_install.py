@@ -62,10 +62,12 @@ class InstallTests(unittest.TestCase):
         self.assertIn("Kept", removed.stdout)
 
     def test_plugin_link_replaces_a_copied_plugin_directory(self):
-        self.run_install("--plugin")
+        result = self.run_install("--plugin")
         link = self.home / ".config/omarchy/plugins/local.nuphy-air96"
         self.assertTrue(link.is_symlink())
         self.assertEqual(link.resolve(), ROOT.resolve())
+        self.assertIn("Registering the bar widget", result.stdout)
+        self.assertIn("not on PATH", result.stdout)
 
         self.run_install("--uninstall")
         self.assertFalse(link.exists())
