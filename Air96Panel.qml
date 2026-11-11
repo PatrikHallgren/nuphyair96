@@ -1,5 +1,6 @@
+pragma ComponentBehavior: Bound
 import QtQuick
-import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Popup only. Widget.qml owns the bar button and the air96 IPC target.
@@ -22,16 +23,16 @@ Panel {
     open: root.opened
     centerOnBar: false
     focusTarget: panel.loadedContent
-    contentWidth: panel.fittedContentWidth(panel.loadedContent ? panel.loadedContent.preferredWidth : Style.space(760))
-    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Style.space(760))
+    contentWidth: panel.fittedContentWidth(panel.loadedContent ? panel.loadedContent.preferredWidth : Commons.Style.space(760))
+    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Commons.Style.space(760))
 
     content: Item {
       id: page
       property var editorService: root.service
       property string editorError: ""
-      readonly property real preferredWidth: Style.space(760)
+      readonly property real preferredWidth: Commons.Style.space(760)
       implicitWidth: preferredWidth
-      implicitHeight: editor.item ? editor.item.implicitHeight : Math.max(Style.space(180), errorText.implicitHeight + Style.space(24))
+      implicitHeight: editor.item ? editor.item.implicitHeight : Math.max(Commons.Style.space(180), errorText.implicitHeight + Commons.Style.space(24))
 
       function applyService() {
         if (editor.item) editor.item.service = editorService
@@ -61,9 +62,9 @@ Panel {
         visible: editor.status === Loader.Error
         wrapMode: Text.WordWrap
         textFormat: Text.PlainText
-        color: Color.urgent
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
+        color: Commons.Color.urgent
+        font.family: Commons.Style.font.family
+        font.pixelSize: Commons.Style.font.body
         text: page.editorError
       }
     }

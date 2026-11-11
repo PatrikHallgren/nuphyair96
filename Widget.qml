@@ -1,6 +1,7 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell.Hyprland
-import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Bar host, same shape as the clock widget. The popup file is loaded by URL
@@ -115,8 +116,8 @@ BarWidget {
   }
 
   visible: true
-  implicitWidth: Math.max(Style.bar.iconSlot * 2, button.implicitWidth)
-  implicitHeight: Math.max(Style.bar.sizeHorizontal, button.implicitHeight)
+  implicitWidth: Math.max(Commons.Style.bar.iconSlot * 2, button.implicitWidth)
+  implicitHeight: Math.max(Commons.Style.bar.sizeHorizontal, button.implicitHeight)
 
   onBarChanged: injectPanel()
   onServiceChanged: injectPanel()
@@ -152,25 +153,26 @@ BarWidget {
     owner: root
     open: root.fallbackOpen
     centerOnBar: false
-    contentWidth: fallbackPanel.fittedContentWidth(Style.space(420))
-    contentHeight: fallbackPanel.fittedContentHeight(Style.space(180))
+    contentWidth: fallbackPanel.fittedContentWidth(Commons.Style.space(420))
+    contentHeight: fallbackPanel.fittedContentHeight(Commons.Style.space(180))
     content: Item {
-      implicitWidth: Style.space(420)
-      implicitHeight: Style.space(160)
+      implicitWidth: Commons.Style.space(420)
+      implicitHeight: Commons.Style.space(160)
       Text {
         anchors.fill: parent
-        anchors.margins: Style.space(12)
+        anchors.margins: Commons.Style.space(12)
         wrapMode: Text.WordWrap
         textFormat: Text.PlainText
-        color: Color.urgent
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
+        // Qt 6.12 has a built-in Color value type, so the Commons singleton must be qualified.
+        color: Commons.Color.urgent
+        font.family: Commons.Style.font.family
+        font.pixelSize: Commons.Style.font.body
         text: root.panelLoadError || "The Air96 panel did not load."
       }
     }
   }
 
-  ShellIpc {
+  Commons.ShellIpc {
     target: "air96"
 
     function open(): void { root.routedCopy().openHere() }
@@ -187,7 +189,7 @@ BarWidget {
     // "K" is in the bar's monospace font. The nerd-font keyboard glyph is not.
     text: "K"
     labelText: "A96"
-    slotSize: Style.bar.iconSlot * 2
+    slotSize: Commons.Style.bar.iconSlot * 2
     tooltipText: "Air96"
     onPressed: function(b) { root.togglePanel() }
   }
