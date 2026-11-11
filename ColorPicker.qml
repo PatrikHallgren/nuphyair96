@@ -7,6 +7,7 @@ ColumnLayout {
   id: root
   property string hex: "#ffffff"
   property var scrollView: null
+  property real fieldHeight: Commons.Style.space(64)
   signal picked(string hex)
   spacing: Commons.Style.space(6)
 
@@ -37,7 +38,7 @@ ColumnLayout {
   Rectangle {
     id: field
     Layout.fillWidth: true
-    implicitHeight: Commons.Style.space(90)
+    implicitHeight: root.fieldHeight
     color: Qt.hsva(root.hue, 1, 1, 1)
     Rectangle {
       anchors.fill: parent

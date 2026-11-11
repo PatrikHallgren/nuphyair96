@@ -83,7 +83,7 @@ class CliTests(unittest.TestCase):
                 main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         text = stdout.getvalue()
-        for name in ("status", "devices", "sync", "apply", "screensaver", "doctor", "panel", "ha-token", "ha-test"):
+        for name in ("status", "devices", "sync", "apply", "screensaver", "doctor", "panel", "ha-token", "ha-test", "lamp"):
             self.assertIn(name, text)
         self.assertIn("--debug", text)
         with redirect_stderr(stderr):
@@ -183,7 +183,7 @@ class CliTests(unittest.TestCase):
                 return {"status": 200, "body": json.dumps({"state": "on", "entity_id": "light.desk"})}
             self.assertEqual(prepared["headers"]["Authorization"], "Bearer " + secret)
             body = json.loads(prepared["body"])
-            self.assertNotIn("brightness", body)
+            self.assertEqual(body["brightness"], 180)
             self.assertNotIn(secret, prepared["body"].decode())
             return {"status": 200, "body": "[]"}
 
@@ -198,6 +198,24 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("HTTP 401", err)
         self.assertNotIn(secret, out + err)
+
+        calls = []
+
+        def lamp_send(prepared, opener=None, timeout=5):
+            calls.append(prepared)
+            return {"status": 204, "body": "[]"}
+
+        with patch("air96_backend.send_ha", lamp_send):
+            code, out, err = self.run_main(["lamp", "test", "--hex", "#112233", "--brightness", "40"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("HTTP 204", out)
+        self.assertIn("brightness 40", out)
+        self.assertIn("#112233", out)
+        self.assertNotIn(secret, out + err)
+        posted = json.loads(calls[-1]["body"])
+        self.assertEqual(posted["brightness"], 40)
+        self.assertEqual(posted["rgb_color"], [0x11, 0x22, 0x33])
+        self.assertNotIn(secret, calls[-1]["body"].decode())
 
         junk = "UNIQUESECRETVALUE is not a single token"
         with patch("air96_cli.getpass.getpass", return_value=junk):

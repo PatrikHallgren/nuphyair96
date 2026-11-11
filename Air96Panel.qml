@@ -23,16 +23,22 @@ Panel {
     open: root.opened
     centerOnBar: false
     focusTarget: panel.loadedContent
-    contentWidth: panel.fittedContentWidth(panel.loadedContent ? panel.loadedContent.preferredWidth : Commons.Style.space(760))
-    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Commons.Style.space(760))
+    contentWidth: panel.fittedContentWidth(panel.loadedContent ? panel.loadedContent.preferredWidth : Commons.Style.space(440))
+    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight)
 
     content: Item {
       id: page
       property var editorService: root.service
       property string editorError: ""
-      readonly property real preferredWidth: Commons.Style.space(760)
+      readonly property real preferredWidth: Commons.Style.space(440)
+      readonly property real maxBody: Commons.Style.space(520)
       implicitWidth: preferredWidth
-      implicitHeight: editor.item ? editor.item.implicitHeight : Math.max(Commons.Style.space(180), errorText.implicitHeight + Commons.Style.space(24))
+      implicitHeight: {
+        var body = editor.item && editor.item.documentHeight ? editor.item.documentHeight : Commons.Style.space(180)
+        if (editor.status === Loader.Error) body = Math.max(body, errorText.implicitHeight + Commons.Style.space(24))
+        return Math.min(Math.max(body, Commons.Style.space(160)), page.maxBody)
+      }
+      clip: true
 
       function applyService() {
         if (editor.item) editor.item.service = editorService
@@ -42,8 +48,7 @@ Panel {
 
       Loader {
         id: editor
-        anchors.left: parent.left
-        anchors.right: parent.right
+        anchors.fill: parent
         onLoaded: page.applyService()
         onStatusChanged: {
           if (status !== Loader.Error) return
@@ -58,7 +63,8 @@ Panel {
 
       Text {
         id: errorText
-        width: parent.width
+        anchors.fill: parent
+        anchors.margins: Commons.Style.space(8)
         visible: editor.status === Loader.Error
         wrapMode: Text.WordWrap
         textFormat: Text.PlainText

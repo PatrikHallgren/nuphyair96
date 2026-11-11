@@ -114,7 +114,7 @@ State, including keymap backups, lives in `~/.local/state/omarchy-nuphy-air96/`.
 
 ## Backlight and theme
 
-The Lighting tab sets follow, a color, and brightness for the keyboard, and the same three for the lamp. Toggles apply immediately. Color and brightness use Apply keyboard or Save lights. The keyboard write is VIA channel 3: solid effect, brightness, speed, and hue/saturation, then an EEPROM save. If the per-key probe succeeds, clear (`0xA8`) is sent first.
+The panel has three tabs: Keyboard, Lamp, and Keys. The card grows with the active tab up to a screen cap, and the rest scrolls inside the card. Keyboard follow, color, and brightness apply as you change them. The keyboard write is VIA channel 3: solid effect, brightness, speed, and hue/saturation, then an EEPROM save. If the per-key probe succeeds, clear (`0xA8`) is sent first.
 
 Follow reads the active theme at `$XDG_STATE_HOME/omarchy/current/theme` (usually `~/.local/state/omarchy/current/theme`):
 
@@ -129,7 +129,7 @@ Side strips stay on the keyboard's own `SIDE_*` keys.
 
 ## Keymap
 
-The Keys tab reads the dynamic keymap and draws the 100-key layout. Pick a layer (Windows is layer 2, which is what Linux normally uses), pick a key, search a keycode, then Apply.
+The Keys tab reads the dynamic keymap and draws a compact 100-key layout. Pick a layer (Windows is layer 2, which is what Linux normally uses), pick a key, search a keycode, then Apply.
 
 Apply writes only the staged keys. It re-reads first, and if a cell changed since the read it writes nothing and reports the conflict. A JSON backup is stored under the state directory before a successful write. Factory defaults are not exposed over VIA, and this plugin never sends the VIA EEPROM-reset or bootloader commands.
 
@@ -137,7 +137,7 @@ Apply writes only the staged keys. It re-reads first, and if a cell changed sinc
 
 Optional, and independent of the keyboard switch. The default entity is `light.floor_lamp_66fa` at `http://homeassistant.local:8123`. A saved config keeps the entities already in the file.
 
-While the lamp follows the theme, `light/turn_on` sends `rgb_color` only, so the lamp keeps its own brightness. Turn on "Also set lamp brightness while following the theme" (`sync_brightness`) to send `home_assistant.brightness` as well. With follow off, the chosen lamp color and lamp brightness are always sent. Lamp brightness is separate from the keyboard brightness. 180 is about 71%.
+The Lamp tab follows the theme or uses its own color picker. Brightness is always sent as `brightness` (0–255) on `light/turn_on`, including while the lamp follows the theme. The slider applies about a fifth of a second after it stops moving. Lamp brightness is separate from the keyboard brightness. 180 is about 71%. `sync_brightness` in an old config is kept and ignored.
 
 `light.turn_on` turns a light on. `home_assistant.only_when_on` defaults to true: the plugin GETs `/api/states/<entity>` and does not call a light whose state is not `on`. A theme change then leaves an off lamp off. Turn the option off, or turn off "Only when the light is already on", if the lamp should come on with the theme. If every configured light is off, nothing is posted. `ha-test` follows the same rules and says so instead of printing an HTTP status.
 
@@ -148,9 +148,10 @@ Save the token with the CLI. The prompt does not echo. Paste markers from the te
 ```sh
 python3 air96_cli.py ha-token
 python3 air96_cli.py ha-test
+python3 air96_cli.py lamp test --hex '#112233' --brightness 40
 ```
 
-`ha-test` pushes the current color once and prints the HTTP status. It does not print the token. Set the URL and at least one `light.*` entity in the config or the panel first.
+`ha-test` pushes the current color and brightness and prints the HTTP status. `lamp test` does the same and always calls `light/turn_on`, even when "only if already on" would skip an off light. Neither prints the token. The worker logs `Home Assistant HTTP <status> brightness <n>` on stderr. Set the URL and at least one `light.*` entity in the config or the panel first.
 
 Do not fill the file with `read -rsp`. That keeps bracketed-paste bytes in the token. A file of those bytes used to be reported as a missing token.
 

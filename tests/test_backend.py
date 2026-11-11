@@ -61,6 +61,8 @@ class BackendTests(BackendCase):
             "url": "http://ha.local:8123",
             "entities": ["light.floor_lamp_66fa", "light.desk"],
             "token": "super-secret-token",
+            "brightness": 90,
+            "follow_theme": True,
         }, "lighting": {"brightness": 180, "hex": "#112233", "follow_theme": False}})
         calls = []
 
@@ -81,7 +83,7 @@ class BackendTests(BackendCase):
         body = json.loads(posted[0]["body"])
         self.assertEqual(body["entity_id"], ["light.desk"])
         self.assertEqual(body["rgb_color"], [0x11, 0x22, 0x33])
-        self.assertNotIn("brightness", body)
+        self.assertEqual(body["brightness"], 90)
         self.assertNotIn("super-secret-token", posted[0]["body"].decode())
         self.assertIn("left off: light.floor_lamp_66fa", self.backend.message)
 
@@ -107,7 +109,7 @@ class BackendTests(BackendCase):
             self.backend.push_home_assistant()
         self.assertEqual([call["method"] for call in calls], ["POST"])
         body = json.loads(calls[0]["body"])
-        self.assertEqual(body["brightness"], 180)
+        self.assertEqual(body["brightness"], 90)
         self.assertEqual(body["entity_id"], ["light.floor_lamp_66fa"])
         self.assertNotIn("super-secret-token", calls[0]["body"].decode())
 
@@ -206,6 +208,15 @@ class BackendTests(BackendCase):
         self.assertFalse(loaded["lighting"]["follow_theme"])
         self.assertEqual(loaded["lighting"]["hex"], "#010203")
         self.assertEqual(loaded["home_assistant"]["entities"], ["light.floor_lamp_66fa"])
+
+    def test_doubled_vendor_name_is_shown_once(self):
+        from air96_backend import keyboard_title
+        self.assertEqual(keyboard_title("NuPhy NuPhy Air96 V2"), "NuPhy Air96 V2")
+        self.assertEqual(keyboard_title("NuPhy Air96 V2"), "NuPhy Air96 V2")
+        self.backend.set_device({
+            "name": "NuPhy NuPhy Air96 V2", "path": "/dev/hidraw0", "vid": 0x19F5, "pid": 0x3265, "iface": 1,
+        }, None, "")
+        self.assertEqual(self.backend.snapshot()["keyboardName"], "NuPhy Air96 V2")
 
     def test_manual_lamp_color_sends_its_own_brightness(self):
         self.backend.update_settings({"home_assistant": {

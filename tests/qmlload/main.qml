@@ -12,7 +12,7 @@ ApplicationWindow {
   QtObject {
     id: airService
     property var snapshot: ({
-      keyboardName: "NuPhy Air96 V2",
+      keyboardName: "NuPhy NuPhy Air96 V2",
       layout: [{id: "esc", x: 0, y: 0, w: 1, h: 1, label: "Esc", row: 0, col: 0, led: 0}],
       layers: [{id: 2, name: "Win"}],
       lighting: {effect: 1, brightness: 180, speed: 128, hex: "#ffffff", follow_theme: false, solid_when_following: true},
@@ -61,8 +61,8 @@ ApplicationWindow {
   Air.Service { id: service }
   Air.Editor {
     id: editor
-    width: 760
-    height: 420
+    width: 440
+    height: 520
     service: airService
   }
   Air.Air96Panel {
@@ -90,6 +90,8 @@ ApplicationWindow {
       var problems = []
       if (editor.keymapLayer !== 2) problems.push("keymapLayer")
       if (!editor.loaded) problems.push("editor form did not load")
+      if (editor.titleText() !== "NuPhy Air96 V2") problems.push("title " + editor.titleText())
+      if (!(editor.documentHeight > 80)) problems.push("documentHeight")
       if (widget.panelLoadError) problems.push(widget.panelLoadError)
       if (problems.length) console.warn("QMLLOAD_FAIL " + problems.join("; "))
       else console.log("QMLLOAD_OK")
