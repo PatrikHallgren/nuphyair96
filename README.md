@@ -120,7 +120,11 @@ Apply writes only the staged keys. It re-reads first, and if a cell changed sinc
 
 ## Home Assistant
 
-Optional. When enabled, a successful keyboard color write also POSTs `light/turn_on` with `rgb_color` and `brightness`. You can push once from the panel without changing the keyboard.
+Optional. When enabled, a successful keyboard color write also POSTs `light/turn_on` with `rgb_color` only. The lamp keeps its current brightness. You can push once from the panel without changing the keyboard.
+
+`home_assistant.sync_brightness` defaults to false. Turn it on, or use the panel switch "Also set brightness", to send the keyboard brightness as well. That value is 0–255, so 180 is about 71% and is what made the lamp jump.
+
+`light.turn_on` turns a light on. `home_assistant.only_when_on` defaults to true: the plugin GETs `/api/states/<entity>` and does not call a light whose state is not `on`. A theme change then leaves an off lamp off. Turn the option off, or turn off "Only when the light is already on", if the lamp should come on with the theme. If every configured light is off, nothing is posted. `ha-test` follows the same rules and says so instead of printing an HTTP status.
 
 The token is an inline config value, then the `HA_TOKEN` environment variable, then `token_file`. Prefer the file. The panel never shows the token, and status JSON does not contain it. Only `http` and `https` URLs are accepted. Entity ids must look like `light.desk`.
 
@@ -221,7 +225,7 @@ Use the USB cable.
 2. Apply solid white, then a non-solid effect, and confirm the index matches the name in the dropdown. If 2.1.x shifted the list, the number on the keyboard is the one to trust.
 3. `./install.sh --no-plugin`, then `apply --follow on`, then switch themes, including Tokyo Night (`keyboard.rgb` is `ff00ff` with no hash). The keyboard should change without running the command again. Without that hook, follow only applies when you run it yourself.
 4. Read the keymap, change one Windows-layer key, Apply, and confirm it. Change that key in VIA or on another host, then Apply the old draft: the plugin should refuse and leave the new value in place.
-5. Point Home Assistant at one `light.*` entity and confirm the room light follows a successful color write. Confirm `status` does not print the token.
+5. Point Home Assistant at one `light.*` entity and confirm an already-on light follows a successful color write without changing brightness. An off light stays off. Confirm `status` does not print the token.
 6. Open the Binds tab. Super keys should be dim before you enable evdev. After the modifier rule, a replug, and a shell restart, hold Super and then Super+Shift and check that the bright keys change.
 7. Focus Firefox, then a terminal. Firefox keys should appear only on Firefox. On stock firmware the per-key probe should fail and the physical backlight should stay on the VIA effect.
 8. After flashing the Omarchy keymap, `status` should show `perKey.supported` true. Turn on push if it is off. Super binds should appear on the keys, and killing the bar plugin should return the normal effect within about two seconds. Fn readable lights should still show while Fn is held.

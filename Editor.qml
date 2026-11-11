@@ -25,6 +25,8 @@ Controls.ScrollView {
   property string haUrl: ""
   property string haEntities: ""
   property bool haEnabled: false
+  property bool haSyncBrightness: false
+  property bool haOnlyWhenOn: true
   property bool modifierListen: false
   property bool pushKeys: false
   property bool musicOn: false
@@ -53,6 +55,8 @@ Controls.ScrollView {
     haUrl = ha.url || ""
     haEntities = (ha.entities || []).join(", ")
     haEnabled = !!ha.enabled
+    haSyncBrightness = !!ha.syncBrightness
+    haOnlyWhenOn = ha.onlyWhenOn !== false
     modifierListen = !!(snapshot.modifiers && snapshot.modifiers.enabled)
     pushKeys = !!(snapshot.perKey && snapshot.perKey.push)
     musicOn = !!(snapshot.music && snapshot.music.enabled)
@@ -312,6 +316,27 @@ Controls.ScrollView {
         foreground: Commons.Color.popups.text
         onClicked: root.haEnabled = !root.haEnabled
       }
+      Ui.Toggle {
+        Layout.fillWidth: true
+        label: "Also set brightness"
+        checked: root.haSyncBrightness
+        foreground: Commons.Color.popups.text
+        onClicked: root.haSyncBrightness = !root.haSyncBrightness
+      }
+      Ui.Toggle {
+        Layout.fillWidth: true
+        label: "Only when the light is already on"
+        checked: root.haOnlyWhenOn
+        foreground: Commons.Color.popups.text
+        onClicked: root.haOnlyWhenOn = !root.haOnlyWhenOn
+      }
+      PlainText {
+        Layout.fillWidth: true
+        font.pixelSize: Commons.Style.font.caption
+        opacity: 0.75
+        wrapMode: Text.WordWrap
+        text: "Color only, so the lamp keeps its brightness. Home Assistant turn_on turns a light on; an off light is skipped while Only when the light is already on is enabled."
+      }
       RowLayout {
         Layout.fillWidth: true
         Ui.Button {
@@ -321,6 +346,7 @@ Controls.ScrollView {
           foreground: Commons.Color.popups.text
           onClicked: root.service && root.service.request("settings", {home_assistant: {
             enabled: root.haEnabled, url: root.haUrl,
+            sync_brightness: root.haSyncBrightness, only_when_on: root.haOnlyWhenOn,
             entities: root.haEntities.split(",").map(function(item) { return item.trim() }).filter(function(item) { return item.length > 0 })
           }})
         }

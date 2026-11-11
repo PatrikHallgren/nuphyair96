@@ -13,11 +13,13 @@ import time
 
 from air96_ha import (
     HomeAssistantError,
+    light_is_on,
     normalize_entities,
     normalize_url,
     resolve_token,
     send as send_ha,
     service_request,
+    state_request,
     turn_on_payload,
 )
 from air96_keycodes import catalog, keycode_name, keycode_short
@@ -91,6 +93,8 @@ def default_config():
             "token_file": "",
             "token": "",
             "entities": [],
+            "sync_brightness": False,
+            "only_when_on": True,
         },
         "modifiers": {"enabled": False},
         "per_key": {"enabled": True, "push_to_keyboard": True},
@@ -152,6 +156,8 @@ def validate_config(raw):
         merged["token_env"] = str(merged["token_env"] or "HA_TOKEN").strip()[:80]
         merged["token_file"] = str(merged["token_file"] or "").strip()[:300]
         merged["token"] = str(merged["token"] or "").strip()
+        merged["sync_brightness"] = _bool(merged["sync_brightness"], "home_assistant.sync_brightness")
+        merged["only_when_on"] = _bool(merged["only_when_on"], "home_assistant.only_when_on")
         if merged["entities"]:
             merged["entities"] = normalize_entities(merged["entities"])
         else:
@@ -390,7 +396,7 @@ class Backend:
         self.error = ""
         if push_ha and self.config["home_assistant"]["enabled"]:
             try:
-                self.push_home_assistant(color, lighting["brightness"])
+                self.push_home_assistant(color)
             except HomeAssistantError:
                 # The keyboard changed. Drop the signature so the next sync retries the lights.
                 self.applied_signature = ""
@@ -421,9 +427,32 @@ class Backend:
     def push_home_assistant(self, color=None, brightness=None):
         section = self.config["home_assistant"]
         color = color or (self.theme_color() if self.config["lighting"]["follow_theme"] else self.config["lighting"]["hex"])
-        brightness = self.config["lighting"]["brightness"] if brightness is None else brightness
         token = resolve_token(self.environ, section["token_env"], section["token_file"], section["token"])
-        payload = turn_on_payload(section["entities"], color, brightness)
+        entities = normalize_entities(section["entities"])
+        skipped = []
+        if section["only_when_on"]:
+            lit = []
+            for entity in entities:
+                prepared = state_request(section["url"], token, entity)
+                try:
+                    result = send_ha(prepared)
+                    on = light_is_on(result["body"])
+                except HomeAssistantError as exc:
+                    self.ha_error = str(exc)[:400]
+                    raise
+                if on:
+                    lit.append(entity)
+                else:
+                    skipped.append(entity)
+            entities = lit
+            if not entities:
+                self.ha_error = ""
+                self.message = "Home Assistant lights are off; color not pushed"
+                return {"status": None, "skipped": True, "body": "", "leftOff": skipped}
+        level = None
+        if section["sync_brightness"]:
+            level = self.config["lighting"]["brightness"] if brightness is None else brightness
+        payload = turn_on_payload(entities, color, level)
         prepared = service_request(section["url"], token, payload)
         try:
             result = send_ha(prepared)
@@ -432,7 +461,13 @@ class Backend:
             raise
         self.ha_error = ""
         self.ha_pushed = color
-        self.message = f"Home Assistant lights set to {color}"
+        if skipped:
+            self.message = f"Home Assistant lights set to {color}; left off: {', '.join(skipped)}"
+        else:
+            self.message = f"Home Assistant lights set to {color}"
+        result = dict(result)
+        result["skipped"] = False
+        result["leftOff"] = skipped
         return result
 
     def load_keymap(self):
@@ -662,6 +697,8 @@ class Backend:
                 "tokenEnv": section["token_env"],
                 "tokenFile": section["token_file"],
                 "configured": token_set,
+                "syncBrightness": section["sync_brightness"],
+                "onlyWhenOn": section["only_when_on"],
                 "lastError": self.ha_error,
                 "lastPushed": self.ha_pushed,
             },
