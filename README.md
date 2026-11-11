@@ -6,6 +6,50 @@ The Air96 is a QMK/VIA keyboard. It is not the protocol used by [fldc/omarchy-nu
 
 Nothing here was run on an Air96. [docs/VERIFICATION.md](docs/VERIFICATION.md) splits tested logic from code that still needs your keyboard.
 
+## Quick start
+
+`apply --follow on` writes the current theme once. Later theme changes reach the keyboard only if something runs `sync`. The bar worker does that when the plugin is enabled. Without the bar, Omarchy's theme-set hook does it. Neither is installed by cloning the repo.
+
+Current Omarchy (`quattro`) finishes a theme change by running `omarchy-hook theme-set <name>`. That executes every file in `~/.config/omarchy/hooks/theme-set.d/` with bash, after `~/.local/state/omarchy/current/theme` is already the new theme. stdout from the hook is discarded. A failing hook is logged and does not undo the theme.
+
+CLI only, which is enough for theme follow:
+
+```sh
+git clone https://github.com/PatrikHallgren/nuphyair96.git
+cd nuphyair96
+./install.sh --no-plugin
+python3 air96_cli.py apply --follow on
+```
+
+The next theme change runs `air96_cli.py sync` from this checkout. `sync` does nothing until follow is on. The hook does not need the bar plugin.
+
+Bar plugin as well. `./install.sh` with no arguments also links this checkout to `~/.config/omarchy/plugins/local.nuphy-air96`:
+
+```sh
+./install.sh
+omarchy plugin enable local.nuphy-air96
+```
+
+Restart the shell after enabling. The bar icon target is `omarchy-shell air96 toggle`.
+
+From Omarchy, without a separate checkout:
+
+```sh
+omarchy plugin add https://github.com/PatrikHallgren/nuphyair96 --enable --yes
+~/.config/omarchy/plugins/local.nuphy-air96/install.sh --no-plugin
+python3 ~/.config/omarchy/plugins/local.nuphy-air96/air96_cli.py apply --follow on
+```
+
+Remove the hook, the recorded CLI path, and a plugin symlink this script created. A plugin directory Omarchy cloned, and `config.json`, stay:
+
+```sh
+./install.sh --uninstall
+omarchy plugin disable local.nuphy-air96
+omarchy plugin remove local.nuphy-air96 --yes
+```
+
+The HID udev rule is still a separate sudo copy. See Permissions.
+
 ## What the keyboard actually speaks
 
 | | |
@@ -20,27 +64,9 @@ Details and packet layouts are in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## Install
 
-Omarchy:
+Use [Quick start](#quick-start). `./install.sh` is the install path. Python 3 from the standard library is enough. No pip packages.
 
-```sh
-omarchy plugin add https://github.com/PatrikHallgren/nuphyair96 --enable
-```
-
-The plugin id is `local.nuphy-air96`, so it can sit next to the Air75 plugin. The bar icon IPC target is `air96`:
-
-```sh
-omarchy-shell air96 toggle
-```
-
-Python 3 from the standard library is enough. No pip packages.
-
-For a local checkout:
-
-```sh
-ln -s "$(pwd)" ~/.config/omarchy/plugins/local.nuphy-air96
-```
-
-Then enable `local.nuphy-air96` the same way as any other local Omarchy plugin and restart the shell.
+The plugin id is `local.nuphy-air96`, so it can sit next to the Air75 plugin.
 
 ## Permissions
 
@@ -82,15 +108,7 @@ Follow reads the active theme at `$XDG_STATE_HOME/omarchy/current/theme` (usuall
 
 While follow is on, the default is to switch to solid color so the theme hue is visible. Turn off "Use solid color while following" to keep the current effect and only update hue and saturation. Brightness and speed stay as they are. The same color is not written twice.
 
-The worker watches the theme directory with inotify. A theme-set hook is also included, because a copied hook cannot use a relative path:
-
-```sh
-mkdir -p ~/.config/omarchy/hooks/theme-set.d
-cp hooks/theme-set.d/50-air96-sync ~/.config/omarchy/hooks/theme-set.d/
-chmod +x ~/.config/omarchy/hooks/theme-set.d/50-air96-sync
-```
-
-The hook runs `air96_cli.py sync`, which does nothing when follow is off. You can also run `python3 air96_cli.py sync --force`.
+The bar worker watches the theme directory with inotify. The theme-set hook installed by `./install.sh` is the path that works when the bar is not running. It calls `air96_cli.py sync`, which does nothing when follow is off. You can also run `python3 air96_cli.py sync --force`. When a theme change is started from the menu, Omarchy writes hook errors to `~/.local/state/omarchy/theme-set.log`.
 
 Side strips stay on the keyboard's own `SIDE_*` keys.
 
@@ -187,7 +205,7 @@ Use the USB cable.
 
 1. `python3 air96_cli.py devices` shows one Air96 and `python3 air96_cli.py status` says `connected` after the udev rule. Try both product ids if you have more than one board, or if a firmware update changes the id.
 2. Apply solid white, then a non-solid effect, and confirm the index matches the name in the dropdown. If 2.1.x shifted the list, the number on the keyboard is the one to trust.
-3. Turn on theme follow and switch themes, including Tokyo Night (`keyboard.rgb` is `ff00ff` with no hash). The keyboard should change once, not on a timer.
+3. `./install.sh --no-plugin`, then `apply --follow on`, then switch themes, including Tokyo Night (`keyboard.rgb` is `ff00ff` with no hash). The keyboard should change without running the command again. Without that hook, follow only applies when you run it yourself.
 4. Read the keymap, change one Windows-layer key, Apply, and confirm it. Change that key in VIA or on another host, then Apply the old draft: the plugin should refuse and leave the new value in place.
 5. Point Home Assistant at one `light.*` entity and confirm the room light follows a successful color write. Confirm `status` does not print the token.
 6. Open the Binds tab. Super keys should be dim before you enable evdev. After the modifier rule, a replug, and a shell restart, hold Super and then Super+Shift and check that the bright keys change.
@@ -206,5 +224,6 @@ The QML panel was not launched here. If the bar icon fails to load, the Python C
 | `air96_cli.py` | `status`, `devices`, `sync`, `apply`, `import-vscode` |
 | `air96_protocol.py`, `air96_hid.py`, `air96_layout.py` | VIA packets, hidraw discovery, 100-key map |
 | `profiles/` | Example window profiles |
+| `install.sh` | Theme-set hook, optional plugin link, and uninstall |
 | `udev/` | Seat ACL rules, not installed automatically |
-| `hooks/theme-set.d/50-air96-sync` | Optional theme hook |
+| `hooks/theme-set.d/50-air96-sync` | Theme hook. `./install.sh` links it into `~/.config/omarchy/hooks/theme-set.d/` |

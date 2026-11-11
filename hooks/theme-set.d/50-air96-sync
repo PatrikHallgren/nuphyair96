@@ -1,18 +1,65 @@
 #!/bin/sh
-# Omarchy theme-set hook. Copy to ~/.config/omarchy/hooks/theme-set.d/50-air96-sync
-# The hook runs after the theme is current. sync is a no-op unless theme follow is on.
-set -eu
-plugin="${AIR96_PLUGIN:-}"
-if [ -z "$plugin" ]; then
-  for candidate in "$HOME/.config/omarchy/plugins/"*/air96_cli.py; do
-    if [ -f "$candidate" ]; then
-      plugin=$(dirname "$candidate")
-      break
+# AIR96_HOOK_MARKER
+# Omarchy theme-set hook. Current Omarchy (quattro) runs every file in
+# ~/.config/omarchy/hooks/theme-set.d/ via `omarchy-hook theme-set <name>`
+# after ~/.local/state/omarchy/current/theme already points at the new theme.
+# stdout is discarded. A non-zero status is reported as "Hook failed" and does
+# not undo the theme change.
+#
+# This file is enough on its own. It does not need the bar plugin. install.sh
+# records the CLI path; a plugin checkout and AIR96_CLI are fallbacks.
+set -u
+
+find_cli() {
+  if [ -n "${AIR96_CLI:-}" ] && [ -f "$AIR96_CLI" ]; then
+    printf '%s\n' "$AIR96_CLI"
+    return 0
+  fi
+
+  config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  for path_file in "$config_home/omarchy-nuphy-air96/cli-path" "$HOME/.config/omarchy-nuphy-air96/cli-path"; do
+    if [ -f "$path_file" ]; then
+      recorded=$(sed -n '1s/[[:space:]]*$//p' "$path_file")
+      if [ -n "$recorded" ] && [ -f "$recorded" ]; then
+        printf '%s\n' "$recorded"
+        return 0
+      fi
     fi
   done
-fi
-if [ -z "$plugin" ] || [ ! -f "$plugin/air96_cli.py" ]; then
-  echo "Air96 plugin not found under ~/.config/omarchy/plugins" >&2
+
+  # Symlink installed by install.sh: hooks/theme-set.d/../../air96_cli.py
+  here=$(readlink -f "$0" 2>/dev/null || printf '%s\n' "$0")
+  candidate=$(CDPATH= cd -- "$(dirname "$here")/../.." && pwd)/air96_cli.py
+  if [ -f "$candidate" ]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  plugins="$HOME/.config/omarchy/plugins"
+  preferred="$plugins/local.nuphy-air96/air96_cli.py"
+  if [ -f "$preferred" ]; then
+    printf '%s\n' "$preferred"
+    return 0
+  fi
+  if [ -d "$plugins" ]; then
+    for candidate in "$plugins"/*/air96_cli.py; do
+      if [ -f "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+
+  if command -v air96_cli.py >/dev/null 2>&1; then
+    command -v air96_cli.py
+    return 0
+  fi
+  return 1
+}
+
+cli=$(find_cli) || {
+  echo "Air96 CLI not found. From the checkout run ./install.sh" >&2
   exit 0
-fi
-exec python3 "$plugin/air96_cli.py" sync
+}
+
+exec python3 "$cli" sync
