@@ -92,3 +92,28 @@ class QmlBindingTests(unittest.TestCase):
         for path in sorted(ROOT.glob("*.qml")):
             problems.extend(duplicate_bindings(path.read_text(encoding="utf-8"), path.name))
         self.assertEqual(problems, [])
+
+    def test_plugin_qml_does_not_redeclare_final_item_properties(self):
+        # QQuickItem properties marked FINAL in Qt 6.12 (Arch qt6-base, which
+        # Omarchy ships). Declaring one of these on an Item, Control, or
+        # ScrollView is the load error "Cannot override FINAL property".
+        final = {
+            "parent", "x", "y", "z", "width", "height", "opacity", "visible",
+            "childrenRect", "anchors", "left", "right", "horizontalCenter",
+            "top", "bottom", "verticalCenter", "baseline", "focus",
+            "activeFocus", "activeFocusOnTab", "transform", "layer",
+            "data", "children", "resources",
+        }
+        declared = re.compile(
+            r"^\s*(?:default\s+|readonly\s+|required\s+)*property\s+\S+\s+([A-Za-z_]\w*)\b",
+            re.M,
+        )
+        problems = []
+        for path in sorted(ROOT.glob("*.qml")):
+            text = _strip(path.read_text(encoding="utf-8"))
+            for match in declared.finditer(text):
+                name = match.group(1)
+                if name in final:
+                    line = text.count("\n", 0, match.start()) + 1
+                    problems.append(f"{path.name}:{line} redeclares FINAL property {name}")
+        self.assertEqual(problems, [])

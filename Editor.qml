@@ -12,7 +12,8 @@ Controls.ScrollView {
   readonly property real preferredWidth: Commons.Style.space(760)
   signal closeRequested()
   property string tab: "lighting"
-  property int layer: 2
+  // Item.layer is a FINAL property on ScrollView. This is the keymap layer.
+  property int keymapLayer: 2
   property string selectedId: ""
   property string query: ""
   property bool loaded: false
@@ -76,7 +77,7 @@ Controls.ScrollView {
   function assignment() {
     var key = selectedKey()
     if (!key || !service || !service.keymap || !service.keymap.keys) return null
-    return service.keymap.keys[layer + ":" + key.row + ":" + key.col] || null
+    return service.keymap.keys[keymapLayer + ":" + key.row + ":" + key.col] || null
   }
 
   function diagramLabels() {
@@ -86,7 +87,7 @@ Controls.ScrollView {
     var drafts = service && service.drafts ? service.drafts : ({})
     for (var i = 0; i < rows.length; i++) {
       var key = rows[i]
-      var address = layer + ":" + key.row + ":" + key.col
+      var address = keymapLayer + ":" + key.row + ":" + key.col
       var current = keys[address]
       var draft = drafts[address]
       if (draft) labels[key.id] = "•"
@@ -388,10 +389,10 @@ Controls.ScrollView {
           delegate: Ui.Button {
             required property var modelData
             text: modelData.name
-            bordered: root.layer === modelData.id
+            bordered: root.keymapLayer === modelData.id
             focusable: true
             foreground: Commons.Color.popups.text
-            onClicked: root.layer = modelData.id
+            onClicked: root.keymapLayer = modelData.id
           }
         }
       }
@@ -401,7 +402,7 @@ Controls.ScrollView {
           var key = root.selectedKey()
           var current = root.assignment()
           if (!key) return "Choose a key. Layer 0 is Mac, layer 2 is Windows. Linux normally uses the Windows switch."
-          var draft = root.service && root.service.drafts[root.layer + ":" + key.row + ":" + key.col]
+          var draft = root.service && root.service.drafts[root.keymapLayer + ":" + key.row + ":" + key.col]
           return key.label + "  matrix " + key.row + "," + key.col + "  LED " + key.led + "  " + (draft ? ("pending " + draft.value) : (current ? current.name : "unread"))
         }
       }
@@ -426,7 +427,7 @@ Controls.ScrollView {
             onClicked: {
               var key = root.selectedKey()
               var current = root.assignment()
-              if (key && current && root.service) root.service.stage(root.layer, key.row, key.col, modelData.value, current.value)
+              if (key && current && root.service) root.service.stage(root.keymapLayer, key.row, key.col, modelData.value, current.value)
             }
           }
         }

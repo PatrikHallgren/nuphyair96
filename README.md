@@ -203,7 +203,7 @@ Use the USB cable.
 8. `python3 air96_cli.py screensaver test`. The whole board should pulse for about 10 seconds, then return to solid. No reflash. `python3 air96_cli.py screensaver on` does the same pulse while the Omarchy screensaver is running.
 9. Open the Keys tab. The picture is the Air96 layout. Click a key, search a keycode, Apply, and confirm the key. The plugin never resets EEPROM.
 
-The QML panel was not launched here. If the bar icon fails to load, the Python CLI still applies lighting and syncs the theme.
+The QML documents are loaded offscreen with Qt 6.12 (the Qt version current Arch, and therefore Omarchy, ships) and stub Omarchy modules. That is not a running Omarchy bar. If the bar icon fails to load, the Python CLI still applies lighting and syncs the theme.
 
 ## Layout of the repo
 
