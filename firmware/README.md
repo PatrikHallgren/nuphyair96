@@ -6,7 +6,7 @@ The keymap is GPL-2.0-or-later because it is built with QMK and includes NuPhy's
 
 ## What the host can do
 
-Raw HID, 32-byte reports, same usage page as VIA (`FF60` / `61`). VIA commands are unchanged.
+Raw HID, 32-byte reports, no report id, same usage page as VIA (`FF60` / `61`). VIA commands are unchanged. This keymap's `via_command_kb` returns false for them so QMK calls `raw_hid_send`. It returns true only for `0xA6` / `0xA7` / `0xA8`, and only after it has sent the reply. A `void` hook still links over QMK's weak `bool` function and then drops every reply, which is why `status` timed out on the first flashed build.
 
 | Command | Bytes | Result |
 | --- | --- | --- |
@@ -49,6 +49,8 @@ dfu-util -a 0 -d 0483:DF11 -s 0x08000000:leave -D nuphy_air96_v2_ansi_omarchy.bi
 If Esc+plug does not enter the bootloader, the recovery button is under the Caps Lock keycap. Hold that button and plug the cable in, then run the same command.
 
 The first boot after leaving stock firmware resets the VIA keymap and lighting once. Later flashes of this keymap keep VIA settings when the link config is still valid. Expect to redo key assignments after the first switch.
+
+If `status` says the keyboard did not answer after a flash of the first Omarchy image, flash this image again. That image enumerated the raw HID interface and accepted the report, then never sent one back. Typing was unaffected. `--debug` on the CLI prints the bytes that got no reply.
 
 ## Back to official 2.1.5
 

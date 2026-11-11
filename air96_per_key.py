@@ -53,6 +53,37 @@ class PerKeyController:
         data[0] = 0xFF
         return bytes(data)
 
+    def via_command_kb(self, data):
+        """The Omarchy keymap hook. True means raw_hid_send already ran."""
+        if len(data) < 6 or data[0] not in (0xA6, 0xA7, 0xA8):
+            return False
+        reply = bytearray(self.handle(bytes(data)))
+        if reply[0] == 0xFF:
+            return False
+        data[:] = reply
+        return True
+
+    def exchange(self, packet, claim_without_sending=False):
+        """QMK raw_hid_receive from the pinned nuphy-qmk via.c.
+
+        A true via_command_kb return skips QMK's raw_hid_send. The flashed
+        keymap defined that function as void, so the caller treated a leftover
+        register as true and no report came back.
+        """
+        data = bytearray(packet[:32])
+        if len(data) < 32:
+            data.extend(b"\x00" * (32 - len(data)))
+        if claim_without_sending:
+            return None
+        if self.via_command_kb(data):
+            return bytes(data)
+        if data[0] == 0x01:
+            data[1] = 0x00
+            data[2] = 0x0D
+        else:
+            data[0] = 0xFF
+        return bytes(data)
+
     def _probe(self, data):
         if bytes(data[1:5]) != b"A96K":
             data[0] = 0xFF

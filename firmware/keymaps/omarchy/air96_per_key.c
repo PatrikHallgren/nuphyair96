@@ -2,10 +2,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // Host per-key overlay for the Air96 V2. Included from keymap.c so it is part
-// of that translation unit. VIA's own commands are handled before this file
-// runs; only unhandled command ids arrive in via_command_kb.
+// of that translation unit.
+//
+// QMK's via.c declares a weak `bool via_command_kb`. If it returns true, QMK
+// assumes this function already called raw_hid_send and does not send a reply.
+// A `void` definition still links (the prototype is not in via.h). The caller
+// then reads a leftover register as true, so every report, including the VIA
+// version query, is accepted and never answered. Return false for anything
+// this keymap does not own.
 
 #include "air96_per_key.h"
+#include "raw_hid.h"
 #include "user_kb.h"
 #include "via.h"
 
@@ -78,10 +85,9 @@ static void paint_super(void) {
     }
 }
 
-static void command_probe(uint8_t *data) {
+static bool command_probe(uint8_t *data) {
     if (!magic_ok(data)) {
-        data[0] = id_unhandled;
-        return;
+        return false;
     }
     if (data[5] == 0) {
         host_clear();
@@ -99,14 +105,14 @@ static void command_probe(uint8_t *data) {
     data[8] = AIR96_PER_KEY_FLAG_TIMEOUT | AIR96_PER_KEY_FLAG_SUPER | AIR96_PER_KEY_FLAG_CLEAR;
     data[9] = (AIR96_PER_KEY_TIMEOUT_MS >> 8) & 0xFF;
     data[10] = AIR96_PER_KEY_TIMEOUT_MS & 0xFF;
+    return true;
 }
 
-static void command_set(uint8_t *data, uint8_t length) {
+static bool command_set(uint8_t *data, uint8_t length) {
     uint8_t offset = data[1];
     uint8_t count = data[2];
     if (count < 1 || count > AIR96_PER_KEY_LEDS_PER_PACKET || (uint16_t)3 + (uint16_t)count * 3 > length) {
-        data[0] = id_unhandled;
-        return;
+        return false;
     }
     if (link_is_usb()) {
         for (uint8_t index = 0; index < count; index++) {
@@ -123,34 +129,36 @@ static void command_set(uint8_t *data, uint8_t length) {
     } else {
         host_clear();
     }
+    return true;
 }
 
-static void command_clear(uint8_t *data) {
+static bool command_clear(uint8_t *data) {
     if (!magic_ok(data)) {
-        data[0] = id_unhandled;
-        return;
+        return false;
     }
     host_clear();
+    return true;
 }
 
-void via_command_kb(uint8_t *data, uint8_t length) {
+bool via_command_kb(uint8_t *data, uint8_t length) {
+    bool handled = false;
     if (length < 6) {
-        data[0] = id_unhandled;
-        return;
+        return false;
     }
     if (data[0] == AIR96_CMD_PROBE) {
-        command_probe(data);
-        return;
+        handled = command_probe(data);
+    } else if (data[0] == AIR96_CMD_SET) {
+        handled = command_set(data, length);
+    } else if (data[0] == AIR96_CMD_CLEAR) {
+        handled = command_clear(data);
+    } else {
+        return false;
     }
-    if (data[0] == AIR96_CMD_SET) {
-        command_set(data, length);
-        return;
+    if (!handled) {
+        return false;
     }
-    if (data[0] == AIR96_CMD_CLEAR) {
-        command_clear(data);
-        return;
-    }
-    data[0] = id_unhandled;
+    raw_hid_send(data, length);
+    return true;
 }
 
 bool rgb_matrix_indicators_user(void) {

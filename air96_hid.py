@@ -10,12 +10,31 @@ import errno
 import os
 from pathlib import Path
 import select
+import sys
 import time
 
 from air96_layout import PRODUCT_IDS, VENDOR_ID, VIA_USAGE, VIA_USAGE_PAGE
 from air96_protocol import PACKET_SIZE
 
 HIDRAW_ROOT = Path("/sys/class/hidraw")
+debug = False
+
+
+def set_debug(enabled):
+    global debug
+    debug = bool(enabled)
+
+
+def _trace(message):
+    if debug:
+        print(message, file=sys.stderr)
+
+
+def timeout_message(path, sent, timeout):
+    return (
+        f"Keyboard did not answer: wrote {bytes(sent).hex()} to {path}, "
+        f"timed out after {timeout:.2f}s with no report"
+    )
 
 
 class HidError(RuntimeError):
@@ -147,18 +166,32 @@ class HidTransport:
         data = bytes(payload)
         if len(data) != PACKET_SIZE:
             raise HidError("VIA report must be 32 bytes")
-        self._write(data)
-        return self._read()
+        sent = self._write(data)
+        _trace(f"HID {self.path} wrote {len(sent)} bytes: {sent.hex()}")
+        try:
+            response = self._read()
+        except HidError as exc:
+            if "did not answer" in str(exc):
+                _trace(timeout_message(self.path, sent, self.timeout))
+                if debug:
+                    raise HidError(timeout_message(self.path, sent, self.timeout)) from exc
+            raise
+        _trace(f"HID {self.path} read {len(response)} bytes: {response.hex()}")
+        return response
 
     def _write(self, data):
         try:
             written = os.write(self.fd, data)
+            sent = data
         except OSError as exc:
             if exc.errno != errno.EINVAL:
                 raise HidError(f"HID write failed: {exc.strerror}") from exc
-            written = os.write(self.fd, b"\x00" + data)
+            sent = b"\x00" + data
+            _trace(f"HID {self.path} rejected a 32-byte write; retried with a 00 report id")
+            written = os.write(self.fd, sent)
         if written < PACKET_SIZE:
             raise HidError("Short HID write")
+        return sent[:written]
 
     def _read(self):
         ready, _, _ = select.select([self.fd], [], [], self.timeout)
@@ -168,6 +201,9 @@ class HidTransport:
         if len(data) == PACKET_SIZE + 1 and data[0] == 0:
             data = data[1:]
         if len(data) < PACKET_SIZE:
+            received = data.hex()
+            if debug:
+                raise HidError(f"Short HID response from {self.path}: {received or 'empty'}")
             raise HidError("Short HID response")
         return data[:PACKET_SIZE]
 

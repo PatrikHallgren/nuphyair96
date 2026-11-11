@@ -2,6 +2,9 @@ import unittest
 
 from air96_per_key import PerKeyController
 from air96_protocol import (
+    lighting_get,
+    protocol_version_request,
+    VAL_EFFECT,
     per_key_capabilities,
     per_key_clear_request,
     per_key_probe_request,
@@ -19,7 +22,24 @@ class PerKeyTests(unittest.TestCase):
         self.assertIn("#define AIR96_CMD_SET 0xA7", header)
         self.assertIn("#define AIR96_CMD_CLEAR 0xA8", header)
         self.assertIn("#define AIR96_PER_KEY_TIMEOUT_MS 2000", header)
-        self.assertIn("return true;", source)
+        self.assertIn("bool via_command_kb", source)
+        self.assertNotIn("void via_command_kb", source)
+        self.assertIn("raw_hid_send(data, length)", source)
+        self.assertIn("return false;", source)
+
+    def test_qmk_sends_via_replies_unless_the_keymap_claims_them(self):
+        board = PerKeyController()
+        version = board.exchange(protocol_version_request())
+        self.assertEqual(version[0], 0x01)
+        self.assertEqual(version[1:3], b"\x00\x0d")
+        self.assertIsNone(board.exchange(protocol_version_request(), claim_without_sending=True))
+        probe = board.exchange(per_key_probe_request())
+        self.assertEqual(probe[:6], bytes((0xA6, ord("A"), ord("9"), ord("6"), ord("K"), 1)))
+        lighting = board.exchange(lighting_get(VAL_EFFECT))
+        self.assertEqual(len(lighting), 32)
+        bad = bytearray(per_key_clear_request())
+        bad[1] = 0
+        self.assertEqual(board.exchange(bad)[0], 0xFF)
 
     def test_single_led_batch_and_short_probe(self):
         packets = per_key_set_packets([(9, 8, 7)], offset=38)
