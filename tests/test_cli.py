@@ -184,7 +184,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(saved["home_assistant"]["token"], "")
 
         def fake_send(prepared, opener=None, timeout=5):
+            if prepared["method"] == "GET":
+                return {"status": 200, "body": json.dumps({"state": "on", "entity_id": "light.desk"})}
             self.assertEqual(prepared["headers"]["Authorization"], "Bearer " + secret)
+            body = json.loads(prepared["body"])
+            self.assertNotIn("brightness", body)
             self.assertNotIn(secret, prepared["body"].decode())
             return {"status": 200, "body": "[]"}
 

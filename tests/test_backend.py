@@ -1,6 +1,7 @@
 import json
 import math
 import unittest
+from unittest.mock import patch
 
 from support import BackendCase
 from air96_audio import analyze
@@ -44,7 +45,71 @@ class BackendTests(BackendCase):
         dumped = json.dumps(self.backend.snapshot())
         self.assertNotIn("super-secret-token", dumped)
         self.assertTrue(self.backend.snapshot()["homeAssistant"]["configured"])
+        self.assertFalse(self.backend.snapshot()["homeAssistant"]["syncBrightness"])
+        self.assertTrue(self.backend.snapshot()["homeAssistant"]["onlyWhenOn"])
         self.assertEqual(oct((self.backend.config_path.stat().st_mode) & 0o777), "0o600")
+
+    def test_color_push_keeps_lamp_brightness_and_skips_an_off_light(self):
+        loaded = validate_config({"home_assistant": {
+            "url": "http://ha.local:8123",
+            "entities": ["light.floor_lamp_66fa"],
+        }})
+        self.assertFalse(loaded["home_assistant"]["sync_brightness"])
+        self.assertTrue(loaded["home_assistant"]["only_when_on"])
+        self.backend.update_settings({"home_assistant": {
+            "enabled": True,
+            "url": "http://ha.local:8123",
+            "entities": ["light.floor_lamp_66fa", "light.desk"],
+            "token": "super-secret-token",
+        }, "lighting": {"brightness": 180, "hex": "#112233", "follow_theme": False}})
+        calls = []
+
+        def fake_send(prepared, opener=None, timeout=5):
+            calls.append(prepared)
+            entity = prepared["url"].rsplit("/", 1)[-1]
+            state = "off" if entity == "light.floor_lamp_66fa" else "on"
+            if prepared["method"] == "GET":
+                return {"status": 200, "body": json.dumps({"state": state, "entity_id": entity})}
+            return {"status": 200, "body": "[]"}
+
+        self.connect()
+        with patch("air96_backend.send_ha", fake_send):
+            self.backend.apply_lighting(force=True)
+        self.assertEqual(self.keyboard.brightness, 180)
+        posted = [call for call in calls if call["method"] == "POST"]
+        self.assertEqual(len(posted), 1)
+        body = json.loads(posted[0]["body"])
+        self.assertEqual(body["entity_id"], ["light.desk"])
+        self.assertEqual(body["rgb_color"], [0x11, 0x22, 0x33])
+        self.assertNotIn("brightness", body)
+        self.assertNotIn("super-secret-token", posted[0]["body"].decode())
+        self.assertIn("left off: light.floor_lamp_66fa", self.backend.message)
+
+        calls.clear()
+        self.backend.update_settings({"home_assistant": {"entities": ["light.floor_lamp_66fa"]}})
+        with patch("air96_backend.send_ha", fake_send):
+            self.backend.push_home_assistant()
+        self.assertEqual([call["method"] for call in calls], ["GET"])
+        self.assertIn("color not pushed", self.backend.message)
+        self.assertNotIn("super-secret-token", self.backend.message)
+
+        calls.clear()
+        self.backend.update_settings({
+            "home_assistant": {"sync_brightness": True, "only_when_on": False, "entities": ["light.floor_lamp_66fa"]},
+            "lighting": {"hex": "#778899", "brightness": 180},
+        })
+
+        def post_only(prepared, opener=None, timeout=5):
+            calls.append(prepared)
+            return {"status": 200, "body": "[]"}
+
+        with patch("air96_backend.send_ha", post_only):
+            self.backend.push_home_assistant()
+        self.assertEqual([call["method"] for call in calls], ["POST"])
+        body = json.loads(calls[0]["body"])
+        self.assertEqual(body["brightness"], 180)
+        self.assertEqual(body["entity_id"], ["light.floor_lamp_66fa"])
+        self.assertNotIn("super-secret-token", calls[0]["body"].decode())
 
     def test_stock_probe_reports_per_key_unavailable(self):
         self.connect(per_key=False)

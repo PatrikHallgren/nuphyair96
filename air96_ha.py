@@ -42,15 +42,46 @@ def normalize_entities(entities):
     return cleaned
 
 
-def turn_on_payload(entities, color, brightness):
+def turn_on_payload(entities, color, brightness=None):
+    """Color only, unless brightness is an int. Omitting it leaves the lamp's level alone."""
     red, green, blue = hex_to_rgb(color)
-    if type(brightness) is not int or not 0 <= brightness <= 255:
-        raise HomeAssistantError("Brightness must be 0-255")
-    return {
+    payload = {
         "entity_id": normalize_entities(entities),
         "rgb_color": [red, green, blue],
-        "brightness": brightness,
     }
+    if brightness is None:
+        return payload
+    if type(brightness) is not int or not 0 <= brightness <= 255:
+        raise HomeAssistantError("Brightness must be 0-255")
+    payload["brightness"] = brightness
+    return payload
+
+
+def state_request(url, token, entity):
+    entity_id = normalize_entities([entity])[0]
+    token = prepare_token(token)
+    return {
+        "url": f"{normalize_url(url)}/api/states/{entity_id}",
+        "method": "GET",
+        "headers": {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+    }
+
+
+def light_is_on(document):
+    """True only for Home Assistant state ``on``. Anything else, including ``off``, is not."""
+    if isinstance(document, (bytes, bytearray)):
+        document = document.decode("utf-8", errors="replace")
+    if isinstance(document, str):
+        try:
+            document = json.loads(document)
+        except json.JSONDecodeError as exc:
+            raise HomeAssistantError("Home Assistant state is not JSON") from exc
+    if not isinstance(document, dict) or "state" not in document:
+        raise HomeAssistantError("Home Assistant state has no state field")
+    return str(document["state"]).lower() == "on"
 
 
 def sanitize_token(raw):
@@ -124,11 +155,13 @@ def resolve_token(environ, token_env, token_file, inline=""):
 
 def send(prepared, opener=None, timeout=5):
     call = opener or request.urlopen
-    req = request.Request(prepared["url"], data=prepared["body"], headers=prepared["headers"], method="POST")
+    data = prepared.get("body")
+    method = prepared.get("method") or ("POST" if data is not None else "GET")
+    req = request.Request(prepared["url"], data=data, headers=prepared["headers"], method=method)
     try:
         with call(req, timeout=timeout) as response:
             status = getattr(response, "status", None) or response.getcode()
-            raw = response.read(4096)
+            raw = response.read(65536)
     except error.HTTPError as exc:
         detail = exc.read(300).decode("utf-8", errors="replace") if exc.fp else ""
         raise HomeAssistantError(f"Home Assistant returned HTTP {exc.code} {detail[:180]}".strip()) from exc
@@ -138,4 +171,4 @@ def send(prepared, opener=None, timeout=5):
         raise HomeAssistantError(f"Home Assistant unreachable: {exc.strerror or exc}") from exc
     if status and int(status) >= 300:
         raise HomeAssistantError(f"Home Assistant returned HTTP {status}")
-    return {"status": int(status or 200), "body": raw.decode("utf-8", errors="replace")[:400]}
+    return {"status": int(status or 200), "body": raw.decode("utf-8", errors="replace")}
