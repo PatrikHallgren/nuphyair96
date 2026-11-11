@@ -154,13 +154,31 @@ def command_ha_token(backend, args):
 def command_ha_test(backend, _args):
     with file_lock(backend.state_dir):
         result = backend.push_home_assistant()
+    return _print_ha_result(backend, result)
+
+
+def command_lamp(backend, args):
+    """Set a color and brightness, then POST light.turn_on and print the HTTP status."""
+    patch = {}
+    if args.hex:
+        patch["hex"] = args.hex
+        patch["follow_theme"] = False
+    if args.brightness is not None:
+        patch["brightness"] = args.brightness
+    with file_lock(backend.state_dir):
+        if patch:
+            backend.update_settings({"home_assistant": patch})
+        result = backend.push_home_assistant(only_when_on=False)
+    return _print_ha_result(backend, result)
+
+
+def _print_ha_result(backend, result):
     if result.get("skipped"):
         print(backend.message)
         return 0
-    print(f"Home Assistant returned HTTP {result['status']}")
-    body = (result.get("body") or "").strip()
-    if body:
-        print(body[:400])
+    print(f"Home Assistant HTTP {result['status']}")
+    print(f"color {backend.lamp_color()}")
+    print(f"brightness {backend.lamp_brightness()}")
     return 0
 
 
@@ -185,6 +203,11 @@ def parser():
     ha_token = commands.add_parser("ha-token", help="Prompt for a Home Assistant token and save it")
     ha_token.add_argument("--file", help="Token file to write. Defaults to the configured token_file or ha-token")
     commands.add_parser("ha-test", help="Push the current color once and print the HTTP status")
+    lamp = commands.add_parser("lamp", help="Home Assistant lamp checks")
+    lamp_commands = lamp.add_subparsers(dest="lamp_command", required=True)
+    lamp_test = lamp_commands.add_parser("test", help="POST a color and brightness and print the HTTP status")
+    lamp_test.add_argument("--hex", default="", help="Lamp color. Turns follow off for this call")
+    lamp_test.add_argument("--brightness", type=int, help="Lamp brightness, 0-255")
     doctor = commands.add_parser("doctor", help="Print whether the bar plugin is installed and registered")
     doctor.add_argument("--register", action="store_true", help="Ask Omarchy to rescan and enable the widget")
     commands.add_parser("panel", help="Enable the bar widget if needed and toggle its popup")
@@ -205,6 +228,7 @@ def main(argv=None):
         "panel": command_panel,
         "ha-token": command_ha_token,
         "ha-test": command_ha_test,
+        "lamp": command_lamp,
     }
     try:
         code = handlers[args.command](backend, args)

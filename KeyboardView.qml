@@ -13,6 +13,7 @@ Item {
   signal keyClicked(string id)
   readonly property real unit: width / 19
   implicitHeight: unit * 6
+  clip: true
   LayoutMirroring.enabled: false
   LayoutMirroring.childrenInherit: true
 

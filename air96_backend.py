@@ -9,6 +9,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import sys
 import time
 
 from air96_ha import (
@@ -72,6 +73,21 @@ VERIFICATION = {
     "homeAssistant": "Light payloads are tested. No Home Assistant server was called.",
     "screensaver": "Breathing is sent while org.omarchy.screensaver is running, and it is not written to EEPROM.",
 }
+
+
+def keyboard_title(name):
+    """Drop a repeated manufacturer. The kernel HID name is often "NuPhy NuPhy Air96 V2"."""
+    text = " ".join(str(name or "").split())
+    parts = text.split(" ")
+    if len(parts) >= 2 and parts[0].casefold() == parts[1].casefold():
+        text = " ".join(parts[1:])
+    return text or "Air96 V2"
+
+
+def _without_token(text, token):
+    if token and token in text:
+        return text.replace(token, "[token]")
+    return text
 
 
 def verification_notes(per_key):
@@ -262,6 +278,7 @@ class Backend:
         self.keymap_backup = ""
         self.conflicts = []
         self.ha_error = ""
+        self.ha_status = None
         self.ha_pushed = ""
         self.per_key_caps = None
         self.frame_kind = ""
@@ -491,22 +508,21 @@ class Backend:
         return section["hex"]
 
     def lamp_brightness(self):
-        """None leaves the lamp's own level. Manual color always sends a level."""
-        section = self.config["home_assistant"]
-        if section["follow_theme"] and not section["sync_brightness"]:
-            return None
-        return int(section["brightness"])
+        """Always the configured 0-255 level, including while the lamp follows the theme."""
+        return int(self.config["home_assistant"]["brightness"])
 
-    def push_home_assistant(self, color=None, brightness=None):
+    def push_home_assistant(self, color=None, brightness=None, only_when_on=None):
         section = self.config["home_assistant"]
         if color is None:
             color = self.lamp_color()
         if brightness is None:
             brightness = self.lamp_brightness()
+        if only_when_on is None:
+            only_when_on = section["only_when_on"]
         token = resolve_token(self.environ, section["token_env"], section["token_file"], section["token"])
         entities = normalize_entities(section["entities"])
         skipped = []
-        if section["only_when_on"]:
+        if only_when_on:
             lit = []
             for entity in entities:
                 prepared = state_request(section["url"], token, entity)
@@ -514,7 +530,9 @@ class Backend:
                     result = send_ha(prepared)
                     on = light_is_on(result["body"])
                 except HomeAssistantError as exc:
-                    self.ha_error = str(exc)[:400]
+                    self.ha_error = _without_token(str(exc), token)[:400]
+                    self.ha_status = None
+                    print(self.ha_error, file=sys.stderr)
                     raise
                 if on:
                     lit.append(entity)
@@ -525,22 +543,27 @@ class Backend:
                 self.ha_error = ""
                 self.message = "Home Assistant lights are off; color not pushed"
                 return {"status": None, "skipped": True, "body": "", "leftOff": skipped}
-        payload = turn_on_payload(entities, color, brightness)
+        payload = turn_on_payload(entities, color, int(brightness))
         prepared = service_request(section["url"], token, payload)
         try:
             result = send_ha(prepared)
         except HomeAssistantError as exc:
-            self.ha_error = str(exc)[:400]
+            self.ha_error = _without_token(str(exc), token)[:400]
+            self.ha_status = None
+            print(self.ha_error, file=sys.stderr)
             raise
         self.ha_error = ""
         self.ha_pushed = color
+        self.ha_status = int(result.get("status") or 200)
         if skipped:
-            self.message = f"Home Assistant lights set to {color}; left off: {', '.join(skipped)}"
+            self.message = f"Home Assistant lights set to {color} at brightness {brightness}; left off: {', '.join(skipped)}"
         else:
-            self.message = f"Home Assistant lights set to {color}"
+            self.message = f"Home Assistant lights set to {color} at brightness {brightness}"
+        print(f"Home Assistant HTTP {self.ha_status} brightness {brightness}", file=sys.stderr)
         result = dict(result)
         result["skipped"] = False
         result["leftOff"] = skipped
+        result["brightness"] = brightness
         return result
 
     def load_keymap(self):
@@ -652,7 +675,7 @@ class Backend:
         show = self.config["screensaver"]
         body = {
             "connected": self.transport is not None,
-            "keyboardName": device.get("name") or ("NuPhy Air96 V2" if device else ""),
+            "keyboardName": keyboard_title(device.get("name") or ("NuPhy Air96 V2" if device else "")),
             "path": device.get("path", ""),
             "vid": device.get("vid", 0),
             "pid": device.get("pid", 0),
@@ -688,6 +711,7 @@ class Backend:
                 "syncBrightness": section["sync_brightness"],
                 "onlyWhenOn": section["only_when_on"],
                 "lastError": self.ha_error,
+                "lastStatus": self.ha_status,
                 "lastPushed": self.ha_pushed,
             },
             "hardware": self.hardware,
@@ -825,10 +849,8 @@ def describe_runtime(backend, heartbeat=None, processes=None):
         )
     section = backend.config["home_assistant"]
     if section["enabled"]:
-        if section["follow_theme"]:
-            lines.append("Home Assistant follows the theme color.")
-        else:
-            lines.append(f"Home Assistant uses {section['hex']} at brightness {section['brightness']}.")
+        color = "the theme color" if section["follow_theme"] else section["hex"]
+        lines.append(f"Home Assistant uses {color} at brightness {section['brightness']}.")
 
     runtime = {
         "workerMatches": matches,

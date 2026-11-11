@@ -89,3 +89,43 @@ class QmlLoadTests(unittest.TestCase):
                 linted.stdout,
                 f"{path.name}\n{linted.stdout}",
             )
+
+    def test_panel_screenshots_fit_the_card(self):
+        qml = _qml_binary()
+        self.assertTrue(qml and Path(qml).is_file(), "Qt 6.12 qml is required")
+        shot_dir = Path("/tmp/air96-panel-shots")
+        shot_dir.mkdir(parents=True, exist_ok=True)
+        for stale in shot_dir.glob("*.png"):
+            stale.unlink()
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp/runtime-qmlload"
+        os.makedirs(runtime, exist_ok=True)
+        env = os.environ.copy()
+        env.update({
+            "QT_QPA_PLATFORM": "offscreen",
+            "QSG_RHI_BACKEND": "software",
+            "QT_QUICK_CONTROLS_STYLE": "Basic",
+            "QML_DISABLE_DISK_CACHE": "1",
+            "XDG_RUNTIME_DIR": runtime,
+        })
+        completed = subprocess.run(
+            [qml, "-I", str(STUBS), str(ROOT / "tests" / "qmlload" / "shot.qml")],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=60,
+            check=False,
+        )
+        self.assertIn("QMLSHOT_OK", completed.stdout, completed.stdout)
+        for name in ("keyboard", "lamp", "keys"):
+            path = shot_dir / f"{name}.png"
+            self.assertTrue(path.is_file() and path.stat().st_size > 1000, path)
+            data = path.read_bytes()
+            self.assertEqual(data[1:4], b"PNG", name)
+            width = int.from_bytes(data[16:20], "big")
+            height = int.from_bytes(data[20:24], "big")
+            self.assertLessEqual(width, 440, name)
+            self.assertLessEqual(height, 520, name)
+            self.assertGreater(height, 120, name)
+            self.assertGreaterEqual(width, 400, name)

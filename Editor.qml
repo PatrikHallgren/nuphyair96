@@ -9,9 +9,11 @@ Controls.ScrollView {
   id: root
   required property var service
   readonly property var snapshot: service && service.snapshot ? service.snapshot : ({})
-  readonly property real preferredWidth: Commons.Style.space(760)
+  readonly property real preferredWidth: Commons.Style.space(440)
+  // ScrollView.contentHeight is FINAL. This is the column's own height.
+  readonly property real documentHeight: body.implicitHeight
   signal closeRequested()
-  property string tab: "lighting"
+  property string tab: "keyboard"
   // Item.layer is a FINAL property on ScrollView. This is the keymap layer.
   property int keymapLayer: 2
   property string selectedId: ""
@@ -32,7 +34,6 @@ Controls.ScrollView {
   property int haBrightness: 180
   property bool haFollow: true
   property bool screensaverOn: false
-  implicitHeight: body.implicitHeight
   contentWidth: availableWidth
   clip: true
   focus: true
@@ -42,6 +43,24 @@ Controls.ScrollView {
     id: popupPalette
     readonly property color foreground: Commons.Color.popups.text
     readonly property color background: Commons.Color.popups.background
+  }
+
+  Timer {
+    id: keyboardPush
+    interval: 200
+    onTriggered: root.sendKeyboard()
+  }
+  Timer {
+    id: lampPush
+    interval: 200
+    onTriggered: root.sendLamp()
+  }
+
+  function titleText() {
+    var name = String(snapshot.keyboardName || "Air96 V2").replace(/\s+/g, " ").replace(/^\s|\s$/g, "")
+    var parts = name.split(" ")
+    if (parts.length >= 2 && parts[0].toLowerCase() === parts[1].toLowerCase()) return parts.slice(1).join(" ")
+    return name || "Air96 V2"
   }
 
   function loadForm() {
@@ -101,13 +120,37 @@ Controls.ScrollView {
     var codes = (service && service.keymap && service.keymap.codes) || []
     var found = []
     var needle = query.toLowerCase()
-    for (var i = 0; i < codes.length && found.length < 18; i++) {
+    for (var i = 0; i < codes.length && found.length < 12; i++) {
       if (!needle || String(codes[i].name).toLowerCase().indexOf(needle) >= 0) found.push(codes[i])
     }
     return found
   }
 
+  function entityList() {
+    return haEntities.split(",").map(function(item) { return item.trim() }).filter(function(item) { return item.length > 0 })
+  }
+
+  function sendKeyboard() {
+    if (!service) return
+    if (service.actionBusy) { keyboardPush.restart(); return }
+    service.request("apply", {
+      brightness: brightness, speed: speed, hex: hex, follow_theme: follow
+    })
+  }
+
+  function sendLamp() {
+    if (!service) return
+    if (service.actionBusy) { lampPush.restart(); return }
+    var entities = entityList()
+    service.request("settings", {home_assistant: {
+      enabled: haUrl.length > 0 && entities.length > 0,
+      url: haUrl, hex: haHex, brightness: haBrightness,
+      follow_theme: haFollow, only_when_on: haOnlyWhenOn, entities: entities
+    }})
+  }
+
   onSnapshotChanged: if (!loaded) loadForm()
+  onTabChanged: if (tab === "keys" && service && service.keymap && !service.keymap.known) service.request("keymap-load")
 
   Controls.ScrollBar.horizontal.policy: Controls.ScrollBar.AlwaysOff
   Controls.ScrollBar.vertical: Controls.ScrollBar {
@@ -130,98 +173,82 @@ Controls.ScrollView {
   ColumnLayout {
     id: body
     width: root.availableWidth
-    spacing: Commons.Style.space(8)
+    spacing: Commons.Style.space(6)
 
     PlainText {
       Layout.fillWidth: true
-      text: root.snapshot.keyboardName || "NuPhy Air96 V2"
+      text: root.titleText()
       font.bold: true
       font.pixelSize: Commons.Style.font.heading
+      elide: Text.ElideRight
     }
     PlainText {
       Layout.fillWidth: true
+      font.pixelSize: Commons.Style.font.caption
       color: (root.snapshot.error || (root.service && root.service.lastError)) ? Commons.Color.urgent : Commons.Color.muted
+      elide: Text.ElideRight
+      maximumLineCount: 2
       text: {
         if (!root.service) return "Air96 service is not running"
-        if (root.snapshot.setupIssue === "hid-permission") return "No permission on the VIA hidraw device. Install the udev rule, then replug the USB cable."
-        if (root.snapshot.setupIssue === "not-found") return "Connect the Air96 with the USB cable. Bluetooth and the 2.4G dongle do not expose VIA."
+        if (root.snapshot.setupIssue === "hid-permission") return "No permission on the VIA hidraw device. Replug the USB cable after the udev rule."
+        if (root.snapshot.setupIssue === "not-found") return "Connect the Air96 with the USB cable."
         if (root.snapshot.setupIssue === "ambiguous") return "More than one Air96 VIA interface is connected."
-        return root.snapshot.error || root.snapshot.message || root.service.lastError || "USB VIA backlight. Side strips stay on the keyboard's own controls."
+        return root.snapshot.error || root.snapshot.message || root.service.lastError || "USB VIA backlight"
       }
-    }
-    Rectangle {
-      Layout.fillWidth: true
-      implicitHeight: Commons.Style.space(5)
-      radius: height / 2
-      color: root.snapshot.theme || root.hex || Commons.Color.popups.text
     }
 
     RowLayout {
       Layout.fillWidth: true
+      spacing: Commons.Style.space(4)
       Repeater {
         model: [
-          {id: "lighting", label: "Lighting"},
+          {id: "keyboard", label: "Keyboard"},
+          {id: "lamp", label: "Lamp"},
           {id: "keys", label: "Keys"}
         ]
         delegate: Ui.Button {
           required property var modelData
           Layout.fillWidth: true
           text: modelData.label
-          bordered: root.tab === modelData.id
+          selected: root.tab === modelData.id
+          bordered: true
           focusable: true
           foreground: Commons.Color.popups.text
-          onClicked: {
-            root.tab = modelData.id
-            if (modelData.id === "keys" && root.service && !root.service.keymap.known) root.service.request("keymap-load")
-          }
+          onClicked: root.tab = modelData.id
         }
       }
     }
 
-    KeyboardView {
-      Layout.fillWidth: true
-      Layout.preferredHeight: root.preferredWidth * 6 / 19
-      layout: root.snapshot.layout || []
-      labels: root.diagramLabels()
-      selected: root.selectedId
-      onKeyClicked: function(id) { root.selectedId = id }
-    }
-
     ColumnLayout {
-      id: lightingPage
-      visible: root.tab === "lighting"
+      visible: root.tab === "keyboard"
       Layout.fillWidth: true
       spacing: Commons.Style.space(6)
-      function sendKeyboard() {
-        if (!root.service) return
-        root.service.request("apply", {
-          brightness: root.brightness, speed: root.speed, hex: root.hex, follow_theme: root.follow
-        })
-      }
-      function sendLamp() {
-        if (!root.service) return
-        root.service.request("settings", {home_assistant: {
-          enabled: root.haEnabled, url: root.haUrl, hex: root.haHex, brightness: root.haBrightness,
-          follow_theme: root.haFollow, sync_brightness: root.haSyncBrightness, only_when_on: root.haOnlyWhenOn,
-          entities: root.haEntities.split(",").map(function(item) { return item.trim() }).filter(function(item) { return item.length > 0 })
-        }})
+      KeyboardView {
+        Layout.fillWidth: true
+        Layout.preferredHeight: Math.round(width * 6 / 19)
+        layout: root.snapshot.layout || []
+        labels: ({})
+        selected: ""
       }
       Ui.Toggle {
         Layout.fillWidth: true
-        label: "Keyboard follows the Omarchy theme"
+        label: "Follow the Omarchy theme"
+        description: "Theme color. Brightness still applies."
         checked: root.follow
         foreground: Commons.Color.popups.text
-        onClicked: { root.follow = !root.follow; parent.sendKeyboard() }
+        onClicked: { root.follow = !root.follow; root.sendKeyboard() }
       }
       PlainText {
         visible: root.follow
-        text: "Theme color " + (root.snapshot.theme || "not found") + ". Brightness still applies."
+        text: "Theme " + (root.snapshot.theme || "not found")
+        font.pixelSize: Commons.Style.font.caption
+        color: Commons.Color.muted
       }
       ColorPicker {
         id: keyboardColor
         visible: !root.follow
         Layout.fillWidth: true
-        onPicked: function(next) { root.hex = next }
+        onPicked: function(next) { root.hex = next; keyboardPush.restart() }
         onVisibleChanged: if (visible) setColor(root.hex)
       }
       Ui.TextField {
@@ -232,9 +259,9 @@ Controls.ScrollView {
         maximumLength: 9
         foreground: Commons.Color.popups.text
         selectByMouse: true
-        onTextEdited: { root.hex = text; keyboardColor.setColor(text) }
+        onTextEdited: { root.hex = text; keyboardColor.setColor(text); keyboardPush.restart() }
       }
-      PlainText { text: "Keyboard brightness " + root.brightness }
+      PlainText { text: "Brightness " + root.brightness; font.pixelSize: Commons.Style.font.caption }
       LightingSlider {
         Layout.fillWidth: true
         bar: popupPalette
@@ -243,11 +270,12 @@ Controls.ScrollView {
         value: root.brightness
         fillColor: Commons.Color.accent
         knobColor: activeFocus ? Commons.Color.accent : Commons.Color.popups.text
-        onMoved: function(value) { root.brightness = value }
+        onMoved: function(value) { root.brightness = value; keyboardPush.restart() }
       }
       Ui.Toggle {
         Layout.fillWidth: true
         label: "Light show while the screensaver is on"
+        description: "Breathing in this color. Not written to EEPROM."
         checked: root.screensaverOn
         foreground: Commons.Color.popups.text
         onClicked: {
@@ -255,57 +283,25 @@ Controls.ScrollView {
           if (root.service) root.service.request("settings", {screensaver: {enabled: root.screensaverOn}})
         }
       }
-      PlainText {
-        Layout.fillWidth: true
-        font.pixelSize: Commons.Style.font.caption
-        opacity: 0.75
-        text: "The whole board is one solid color. Screensaver uses the Breathing effect in that color and restores the solid color when org.omarchy.screensaver exits. It is not written to EEPROM."
-      }
-      Ui.Button {
-        Layout.fillWidth: true
-        text: root.service && root.service.actionBusy ? "Working" : "Apply keyboard"
-        enabled: root.service && root.service.ready && !root.service.actionBusy
-        bordered: true
-        focusable: true
-        foreground: Commons.Color.popups.text
-        onClicked: parent.sendKeyboard()
-      }
+    }
 
-      PlainText { text: "Home Assistant"; font.bold: true }
-      Ui.TextField {
-        Layout.fillWidth: true
-        text: root.haUrl
-        placeholderText: "http://homeassistant.local:8123"
-        foreground: Commons.Color.popups.text
-        selectByMouse: true
-        onTextEdited: root.haUrl = text
-      }
-      Ui.TextField {
-        Layout.fillWidth: true
-        text: root.haEntities
-        placeholderText: "light.desk, light.room"
-        foreground: Commons.Color.popups.text
-        selectByMouse: true
-        onTextEdited: root.haEntities = text
-      }
-      PlainText {
-        Layout.fillWidth: true
-        font.pixelSize: Commons.Style.font.caption
-        opacity: 0.75
-        text: "Token from $" + ((root.snapshot.homeAssistant && root.snapshot.homeAssistant.tokenEnv) || "HA_TOKEN") + " or token_file. The token is never shown. " + ((root.snapshot.homeAssistant && root.snapshot.homeAssistant.configured) ? "A token is configured. " : "No token configured. ") + ((root.snapshot.homeAssistant && root.snapshot.homeAssistant.lastError) || "")
-      }
+    ColumnLayout {
+      visible: root.tab === "lamp"
+      Layout.fillWidth: true
+      spacing: Commons.Style.space(6)
       Ui.Toggle {
         Layout.fillWidth: true
-        label: "Lamp follows the Omarchy theme"
+        label: "Follow the Omarchy theme"
+        description: "Theme color, plus the brightness below."
         checked: root.haFollow
         foreground: Commons.Color.popups.text
-        onClicked: { root.haFollow = !root.haFollow; parent.sendLamp() }
+        onClicked: { root.haFollow = !root.haFollow; root.sendLamp() }
       }
       ColorPicker {
         id: lampColor
         visible: !root.haFollow
         Layout.fillWidth: true
-        onPicked: function(next) { root.haHex = next }
+        onPicked: function(next) { root.haHex = next; lampPush.restart() }
         onVisibleChanged: if (visible) setColor(root.haHex)
       }
       Ui.TextField {
@@ -316,9 +312,9 @@ Controls.ScrollView {
         maximumLength: 9
         foreground: Commons.Color.popups.text
         selectByMouse: true
-        onTextEdited: { root.haHex = text; lampColor.setColor(text) }
+        onTextEdited: { root.haHex = text; lampColor.setColor(text); lampPush.restart() }
       }
-      PlainText { text: "Lamp brightness " + root.haBrightness }
+      PlainText { text: "Brightness " + root.haBrightness; font.pixelSize: Commons.Style.font.caption }
       LightingSlider {
         Layout.fillWidth: true
         bar: popupPalette
@@ -327,52 +323,45 @@ Controls.ScrollView {
         value: root.haBrightness
         fillColor: Commons.Color.accent
         knobColor: activeFocus ? Commons.Color.accent : Commons.Color.popups.text
-        onMoved: function(value) { root.haBrightness = value }
+        onMoved: function(value) { root.haBrightness = value; lampPush.restart() }
       }
       Ui.Toggle {
         Layout.fillWidth: true
-        label: "Push color to the lamp"
-        checked: root.haEnabled
-        foreground: Commons.Color.popups.text
-        onClicked: { root.haEnabled = !root.haEnabled; parent.sendLamp() }
-      }
-      Ui.Toggle {
-        visible: root.haFollow
-        Layout.fillWidth: true
-        label: "Also set lamp brightness while following the theme"
-        checked: root.haSyncBrightness
-        foreground: Commons.Color.popups.text
-        onClicked: { root.haSyncBrightness = !root.haSyncBrightness; parent.sendLamp() }
-      }
-      Ui.Toggle {
-        Layout.fillWidth: true
-        label: "Only when the light is already on"
+        label: "Only if the light is already on"
+        description: "An off light stays off."
         checked: root.haOnlyWhenOn
         foreground: Commons.Color.popups.text
-        onClicked: { root.haOnlyWhenOn = !root.haOnlyWhenOn; parent.sendLamp() }
+        onClicked: { root.haOnlyWhenOn = !root.haOnlyWhenOn; root.sendLamp() }
+      }
+      Ui.TextField {
+        Layout.fillWidth: true
+        text: root.haUrl
+        placeholderText: "http://homeassistant.local:8123"
+        foreground: Commons.Color.popups.text
+        selectByMouse: true
+        onTextEdited: { root.haUrl = text; lampPush.restart() }
+      }
+      Ui.TextField {
+        Layout.fillWidth: true
+        text: root.haEntities
+        placeholderText: "light.floor_lamp_66fa"
+        foreground: Commons.Color.popups.text
+        selectByMouse: true
+        onTextEdited: { root.haEntities = text; lampPush.restart() }
       }
       PlainText {
         Layout.fillWidth: true
         font.pixelSize: Commons.Style.font.caption
-        opacity: 0.75
+        color: (root.snapshot.homeAssistant && root.snapshot.homeAssistant.lastError) ? Commons.Color.urgent : Commons.Color.muted
         wrapMode: Text.WordWrap
-        text: "While the lamp follows the theme, its own brightness stays unless Also set lamp brightness is on. A chosen color always sends the lamp brightness. An off light is skipped while Only when the light is already on is enabled. The token is never shown."
-      }
-      RowLayout {
-        Layout.fillWidth: true
-        Ui.Button {
-          Layout.fillWidth: true
-          text: "Save lights"
-          focusable: true
-          foreground: Commons.Color.popups.text
-          onClicked: lightingPage.sendLamp()
-        }
-        Ui.Button {
-          Layout.fillWidth: true
-          text: "Push color now"
-          focusable: true
-          foreground: Commons.Color.popups.text
-          onClicked: root.service && root.service.request("ha-push")
+        maximumLineCount: 2
+        elide: Text.ElideRight
+        text: {
+          var ha = root.snapshot.homeAssistant || ({})
+          if (ha.lastError) return ha.lastError
+          var token = ha.configured ? "Token configured." : "No token."
+          if (ha.lastStatus) return token + " HTTP " + ha.lastStatus + "."
+          return token + " Brightness is sent with the color."
         }
       }
     }
@@ -381,6 +370,14 @@ Controls.ScrollView {
       visible: root.tab === "keys"
       Layout.fillWidth: true
       spacing: Commons.Style.space(6)
+      KeyboardView {
+        Layout.fillWidth: true
+        Layout.preferredHeight: Math.round(width * 6 / 19)
+        layout: root.snapshot.layout || []
+        labels: root.diagramLabels()
+        selected: root.selectedId
+        onKeyClicked: function(id) { root.selectedId = id }
+      }
       Flow {
         Layout.fillWidth: true
         spacing: Commons.Style.space(4)
@@ -389,7 +386,8 @@ Controls.ScrollView {
           delegate: Ui.Button {
             required property var modelData
             text: modelData.name
-            bordered: root.keymapLayer === modelData.id
+            selected: root.keymapLayer === modelData.id
+            bordered: true
             focusable: true
             foreground: Commons.Color.popups.text
             onClicked: root.keymapLayer = modelData.id
@@ -398,12 +396,14 @@ Controls.ScrollView {
       }
       PlainText {
         Layout.fillWidth: true
+        font.pixelSize: Commons.Style.font.caption
+        elide: Text.ElideRight
         text: {
           var key = root.selectedKey()
           var current = root.assignment()
-          if (!key) return "Choose a key. Layer 0 is Mac, layer 2 is Windows. Linux normally uses the Windows switch."
+          if (!key) return "Layer 0 is Mac, layer 2 is Windows."
           var draft = root.service && root.service.drafts[root.keymapLayer + ":" + key.row + ":" + key.col]
-          return key.label + "  matrix " + key.row + "," + key.col + "  LED " + key.led + "  " + (draft ? ("pending " + draft.value) : (current ? current.name : "unread"))
+          return key.label + "  " + key.row + "," + key.col + "  " + (draft ? ("pending " + draft.value) : (current ? current.name : "unread"))
         }
       }
       Ui.TextField {
@@ -436,10 +436,13 @@ Controls.ScrollView {
         Layout.fillWidth: true
         Ui.Button {
           Layout.fillWidth: true
-          text: "Read keymap"
+          text: "Read"
           focusable: true
           foreground: Commons.Color.popups.text
-          onClicked: root.service && root.service.request("keymap-load")
+          onClicked: {
+            root.tab = "keys"
+            if (root.service) root.service.request("keymap-load")
+          }
         }
         Ui.Button {
           Layout.fillWidth: true
@@ -457,12 +460,6 @@ Controls.ScrollView {
           foreground: Commons.Color.popups.text
           onClicked: root.service && root.service.discard()
         }
-      }
-      PlainText {
-        Layout.fillWidth: true
-        font.pixelSize: Commons.Style.font.caption
-        opacity: 0.75
-        text: root.snapshot.backup ? ("Recovery copy " + root.snapshot.backup) : "Click a key on the Air96 picture, search a keycode, then Apply. The picture is the 96% layout, the same idea as the Air75 map in fldc/omarchy-nuphy. Apply writes only staged keys, after a JSON backup."
       }
     }
   }
