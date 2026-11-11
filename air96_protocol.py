@@ -9,9 +9,10 @@ NuPhy fork (``quantum/via.h`` / ``quantum/via.c`` on ``nuphy-keyboards``):
 * keymap cells are big-endian at
   ``(layer * rows * cols + row * cols + col) * 2``
 
-Stock firmware has no per-key host command. ``0xA6`` / ``0xA7`` are a proposed
-extension. Unhandled VIA commands are echoed with the command byte set to
-``0xFF``, so a probe cannot reset the keyboard or jump to the bootloader.
+Stock firmware has no per-key host command. ``0xA6`` / ``0xA7`` / ``0xA8``
+are the Omarchy keymap extension in ``firmware/``. Unhandled VIA commands are
+echoed with the command byte set to ``0xFF``, so a probe cannot reset the
+keyboard or jump to the bootloader.
 """
 
 import colorsys
@@ -35,12 +36,17 @@ VAL_EFFECT = 2
 VAL_SPEED = 3
 VAL_COLOR = 4
 
-# Proposed, not implemented by stock firmware. See docs/PER-KEY.md.
+# Omarchy keymap extension. Stock firmware answers 0xFF. See docs/PER-KEY.md.
 CMD_PER_KEY_PROBE = 0xA6
 CMD_PER_KEY_SET = 0xA7
+CMD_PER_KEY_CLEAR = 0xA8
 PER_KEY_MAGIC = b"A96K"
 PER_KEY_VERSION = 1
 PER_KEY_LEDS_PER_PACKET = 9
+PER_KEY_TIMEOUT_MS = 2000
+PER_KEY_FLAG_TIMEOUT = 0x01
+PER_KEY_FLAG_SUPER = 0x02
+PER_KEY_FLAG_CLEAR = 0x04
 
 # Dropdown order from "NuPhy Air96 V2 via3.json" shipped in the firmware tree.
 # Index 0 disables the matrix. Index 1 is solid color. Names are NuPhy's.
@@ -196,23 +202,49 @@ def per_key_probe_request():
 
 
 def per_key_supported(response):
-    """True only for the proposed firmware ack. Stock VIA returns 0xFF."""
+    """True only for the Omarchy keymap ack. Stock VIA returns 0xFF."""
     if len(response) < 6 or response[0] != CMD_PER_KEY_PROBE:
         return False
     return bytes(response[1:5]) == PER_KEY_MAGIC and response[5] == PER_KEY_VERSION
 
 
-def per_key_set_packets(colors):
-    """Build direct-color packets. ``colors`` is a list of (r, g, b)."""
+def per_key_capabilities(response):
+    """Extra probe fields. A 6-byte ack from an older keymap still counts as supported."""
+    if not per_key_supported(response):
+        return None
+    info = {
+        "version": response[5],
+        "leds": None,
+        "leds_per_packet": None,
+        "flags": 0,
+        "timeout_ms": PER_KEY_TIMEOUT_MS,
+    }
+    if len(response) >= 11 and response[6]:
+        info["leds"] = response[6]
+        info["leds_per_packet"] = response[7]
+        info["flags"] = response[8]
+        info["timeout_ms"] = (response[9] << 8) | response[10]
+    return info
+
+
+def per_key_clear_request():
+    return packet((CMD_PER_KEY_CLEAR, *PER_KEY_MAGIC, PER_KEY_VERSION))
+
+
+def per_key_set_packets(colors, offset=0):
+    """Build direct-color packets. ``colors`` is a list of (r, g, b).
+
+    ``offset`` is the first LED index. Count 1 is the single-LED command.
+    """
     packets = []
-    offset = 0
-    while offset < len(colors):
-        chunk = list(colors[offset:offset + PER_KEY_LEDS_PER_PACKET])
-        values = [CMD_PER_KEY_SET, offset & 0xFF, len(chunk)]
+    index = 0
+    while index < len(colors):
+        chunk = list(colors[index:index + PER_KEY_LEDS_PER_PACKET])
+        values = [CMD_PER_KEY_SET, (offset + index) & 0xFF, len(chunk)]
         for red, green, blue in chunk:
             values.extend((int(red) & 0xFF, int(green) & 0xFF, int(blue) & 0xFF))
         packets.append(packet(values))
-        offset += len(chunk)
+        index += len(chunk)
     return packets
 
 

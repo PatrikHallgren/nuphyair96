@@ -76,11 +76,21 @@ class FakeKeyboard:
             if self.per_key:
                 data[1:5] = b"A96K"
                 data[5] = 1
+                data[6] = 100
+                data[7] = 9
+                data[8] = 0x07
+                data[9] = (2000 >> 8) & 0xFF
+                data[10] = 2000 & 0xFF
             else:
                 data[0] = 0xFF
         elif command == 0xA7:
             if self.per_key:
                 self.frames.append(bytes(data))
+            else:
+                data[0] = 0xFF
+        elif command == 0xA8:
+            if self.per_key and bytes(data[1:5]) == b"A96K":
+                data[0] = 0xA8
             else:
                 data[0] = 0xFF
         else:

@@ -23,3 +23,11 @@ SOFTWARE.
 The persistent worker, theme watcher, explicit keymap apply, and bar-panel
 shape are adapted from fldc/omarchy-nuphy, MIT License, Copyright (c) 2026
 Fredrik Storm. https://github.com/fldc/omarchy-nuphy
+
+The music mode is an independent implementation inspired by
+ravila4/nuphy-rgb-music, MIT License, Copyright (c) 2026 Ricardo Avila.
+https://github.com/ravila4/nuphy-rgb-music
+
+The files under firmware/ are GPL-2.0-or-later. They are a QMK keymap built
+on ablasik/nuphy-qmk and include NuPhy's keymap and game-mode effect. That
+license covers the keymap only. The rest of this repository stays MIT.

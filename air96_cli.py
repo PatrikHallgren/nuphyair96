@@ -65,6 +65,18 @@ def command_apply(backend, args):
     return 0
 
 
+def command_music(backend, args):
+    patch = {"enabled": args.state == "on"}
+    if args.effect:
+        patch["effect"] = args.effect
+    with file_lock(backend.state_dir):
+        backend.update_settings({"music": patch})
+    print(backend.message or "ok")
+    if args.state == "on":
+        print("Music mode is saved. The bar plugin applies it while it is running.")
+    return 0
+
+
 def command_import_vscode(_backend, args):
     text = sys.stdin.read() if args.path == "-" else open(args.path, encoding="utf-8").read()
     profile = import_vscode_keybindings(text, profile_id=args.id, name=args.name, classes=args.match_class)
@@ -87,6 +99,9 @@ def parser():
     apply.add_argument("--brightness", type=int)
     apply.add_argument("--speed", type=int)
     apply.add_argument("--follow", type=lambda value: value.lower() in ("1", "true", "yes", "on"))
+    music = commands.add_parser("music")
+    music.add_argument("state", choices=("on", "off"))
+    music.add_argument("--effect", choices=("spectrum", "vu"))
     imported = commands.add_parser("import-vscode")
     imported.add_argument("path", help="keybindings.json, or - for stdin")
     imported.add_argument("--id", default="vscode")
@@ -104,6 +119,7 @@ def main(argv=None):
         "sync": command_sync,
         "apply": command_apply,
         "import-vscode": command_import_vscode,
+        "music": command_music,
     }
     try:
         code = handlers[args.command](backend, args)

@@ -20,9 +20,13 @@
   },
   "per_key": {
     "enabled": true,
-    "push_to_keyboard": false
+    "push_to_keyboard": true
   },
   "profiles": {
     "enabled": true
+  },
+  "music": {
+    "enabled": false,
+    "effect": "spectrum"
   }
 }

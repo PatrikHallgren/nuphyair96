@@ -1,6 +1,6 @@
 # NuPhy Air96 for Omarchy
 
-Omarchy bar plugin for the NuPhy Air96 V2 (the 2.1.x firmware generation). It sets the RGB backlight, can follow the active Omarchy theme, remaps keys on a picture of the 96% layout, and can push that color to Home Assistant lights. A second view highlights Hyprland and per-app keys. Stock firmware cannot paint individual keys; that part stays on screen unless you add the firmware command in [docs/PER-KEY.md](docs/PER-KEY.md).
+Omarchy bar plugin for the NuPhy Air96 V2 (the 2.1.x firmware generation). It sets the RGB backlight, can follow the active Omarchy theme, remaps keys on a picture of the 96% layout, and can push that color to Home Assistant lights. A second view highlights Hyprland and per-app keys. Stock firmware cannot paint individual keys. The [Omarchy keymap](firmware/README.md) adds that, and a music mode can drive it from the system audio monitor.
 
 The Air96 is a QMK/VIA keyboard. It is not the protocol used by [fldc/omarchy-nuphy](https://github.com/fldc/omarchy-nuphy) for the Air75 V3. This plugin keeps that project's shape: a Quickshell service, one Python worker, theme watching, and an explicit Apply for keymap changes. The worker, watcher, and panel structure are adapted from that project. Copyright 2026 Fredrik Storm, MIT. See [LICENSE](LICENSE).
 
@@ -155,7 +155,23 @@ Games do not share an export format. Steam, Lutris, and Minecraft `options.txt` 
 
 ## Per-key RGB
 
-Not possible on stock firmware. The Binds tab is the feature that works without a firmware change. `push_to_keyboard` defaults to false. If you later flash a firmware that acks the `0xA6` probe, the worker can send `0xA7` frames. The sketch and the reason stock VIA cannot do this are in [docs/PER-KEY.md](docs/PER-KEY.md).
+Not possible on stock firmware. The Binds tab still draws the highlights on screen. `push_to_keyboard` defaults to on: after a successful `0xA6` probe the worker sends `0xA7` frames and resends them about once a second. Stock firmware answers the probe with `0xFF` and the matrix effect is left alone. The command set, the 2 second timeout, and the USB-unplug clear are in [docs/PER-KEY.md](docs/PER-KEY.md). Flash steps are in [firmware/README.md](firmware/README.md).
+
+## Music
+
+The Binds tab has a Music lighting switch. The same switch from a shell:
+
+```sh
+python3 air96_cli.py music on
+python3 air96_cli.py music off
+python3 air96_cli.py music on --effect vu
+```
+
+`spectrum` paints columns across the keyboard. `vu` uses one level for every key. Colors are tinted by the theme accent, or by the configured hex color when theme follow is off. The bar plugin has to be running; the command only saves the setting.
+
+Audio is the PipeWire or PulseAudio monitor (`pw-record`, or `parecord` if that is what the system has). No extra Python packages. On the Omarchy keymap the frames use the per-key protocol. On stock firmware the worker pulses global brightness and hue through VIA about four times a second and does not write those pulses to EEPROM. Stopping music restores the saved effect.
+
+The visualizer idea and the 9-LED batch layout come from [ravila4/nuphy-rgb-music](https://github.com/ravila4/nuphy-rgb-music) by Ricardo Avila, MIT. The capture and FFT here are separate, and the command bytes stay the Air96 probe.
 
 ## Tests
 
@@ -176,6 +192,8 @@ Use the USB cable.
 5. Point Home Assistant at one `light.*` entity and confirm the room light follows a successful color write. Confirm `status` does not print the token.
 6. Open the Binds tab. Super keys should be dim before you enable evdev. After the modifier rule, a replug, and a shell restart, hold Super and then Super+Shift and check that the bright keys change.
 7. Focus Firefox, then a terminal. Firefox keys should appear only on Firefox. On stock firmware the per-key probe should fail and the physical backlight should stay on the VIA effect.
+8. After flashing the Omarchy keymap, `status` should show `perKey.supported` true. Turn on push if it is off. Super binds should appear on the keys, and killing the bar plugin should return the normal effect within about two seconds. Fn readable lights should still show while Fn is held.
+9. Turn music on with something playing. The keys should move. Turn it off and the previous effect should come back. On a stock board, the same switch should only pulse the global color.
 
 The QML panel was not launched here. If the bar icon fails to load, the Python CLI still applies lighting and syncs the theme.
 

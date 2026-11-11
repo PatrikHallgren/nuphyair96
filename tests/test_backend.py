@@ -1,7 +1,9 @@
 import json
+import math
 import unittest
 
 from support import BackendCase
+from air96_audio import analyze
 from air96_backend import validate_config
 from air96_worker import execute
 
@@ -62,6 +64,19 @@ class BackendTests(BackendCase):
         self.backend.push_per_key()
         self.assertGreaterEqual(len(self.keyboard.frames), 12)
         self.assertTrue(all(frame[0] == 0xA7 for frame in self.keyboard.frames))
+        self.assertEqual(self.backend.snapshot()["perKey"]["timeoutMs"], 2000)
+        self.backend.clear_per_key()
+        self.assertEqual(self.backend.frame_kind, "")
+
+    def test_stock_music_pulse_is_not_saved(self):
+        self.connect(per_key=False)
+        samples = [0.6 * math.sin(2 * math.pi * 80 * i / 16000) for i in range(512)]
+        saved = self.keyboard.saved
+        self.backend.push_music(analyze(samples))
+        self.assertEqual(self.keyboard.saved, saved)
+        self.assertEqual(self.keyboard.effect, 1)
+        self.assertGreater(self.keyboard.brightness, 8)
+        self.assertIn("not saved", self.backend.message)
 
     def test_keymap_roundtrip_and_conflict(self):
         self.connect()

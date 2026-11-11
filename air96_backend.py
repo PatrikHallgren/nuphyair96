@@ -25,6 +25,7 @@ from air96_layout import KEYS, LAYER_COUNT, LAYERS, LED_COUNT, MATRIX_COLS, MATR
 from air96_profiles import ProfileError, load_profiles, match_profile
 from air96_protocol import (
     BUFFER_CHUNK,
+    CMD_PER_KEY_CLEAR,
     CMD_UNHANDLED,
     EFFECTS,
     SOLID_EFFECT,
@@ -49,6 +50,8 @@ from air96_protocol import (
     parse_layer_count,
     parse_lighting_get,
     parse_protocol_version,
+    per_key_capabilities,
+    per_key_clear_request,
     per_key_probe_request,
     per_key_set_packets,
     per_key_supported,
@@ -64,7 +67,7 @@ STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/stat
 VERIFICATION = {
     "lighting": "VIA RGB-matrix channel implemented; not run on an Air96",
     "keymap": "VIA dynamic keymap implemented; not run on an Air96",
-    "perKey": "On-screen highlights work without firmware. Hardware per-key needs the proposed raw HID command; stock VIA returns unhandled.",
+    "perKey": "On-screen highlights work on stock firmware. A successful 0xA6 probe pushes them to the keys. The firmware was compiled here and was not flashed.",
     "theme": "keyboard.rgb and colors.toml parsing is tested. Live theme switching was not run here.",
     "homeAssistant": "Light payloads are tested. No Home Assistant server was called.",
     "modifiers": "Evdev parser is tested. Reading /dev/input needs the optional udev rule and was not run here.",
@@ -90,8 +93,9 @@ def default_config():
             "entities": [],
         },
         "modifiers": {"enabled": False},
-        "per_key": {"enabled": True, "push_to_keyboard": False},
+        "per_key": {"enabled": True, "push_to_keyboard": True},
         "profiles": {"enabled": True},
+        "music": {"enabled": False, "effect": "spectrum"},
     }
 
 
@@ -168,6 +172,18 @@ def validate_config(raw):
         for key, value in merged.items():
             merged[key] = _bool(value, f"{name}.{key}")
         config[name] = merged
+    if "music" in raw:
+        section = raw["music"]
+        if not isinstance(section, dict):
+            raise ValueError("music must be an object")
+        extra = set(section) - set(base["music"])
+        if extra:
+            raise ValueError("Unknown music option: " + ", ".join(sorted(extra)))
+        merged = {**base["music"], **section}
+        merged["enabled"] = _bool(merged["enabled"], "music.enabled")
+        if merged["effect"] not in ("spectrum", "vu"):
+            raise ValueError("music.effect must be spectrum or vu")
+        config["music"] = merged
     return config
 
 
@@ -235,18 +251,41 @@ class Backend:
         self.submap = ""
         self.ha_error = ""
         self.ha_pushed = ""
+        self.music_error = ""
+        self.per_key_caps = None
+        self.frame_kind = ""
+        self.last_direct = 0.0
+        self._config_mtime = 0
         self._load()
 
     def _load(self):
         try:
             self.config = load_config(self.config_path)
             self.config_error = ""
+            self._config_mtime = self.config_path.stat().st_mtime if self.config_path.exists() else 0
         except ValueError as exc:
             self.config = default_config()
             self.config_error = str(exc)[:400]
 
     def reload_config(self):
         self._load()
+
+    def reload_if_external(self):
+        """Pick up a config written by the CLI. In-process saves update the mtime stamp."""
+        if not self.config_path.exists():
+            return False
+        mtime = self.config_path.stat().st_mtime
+        if mtime == self._config_mtime:
+            return False
+        self._load()
+        return True
+
+    def _save(self):
+        save_config(self.config_path, self.config)
+        try:
+            self._config_mtime = self.config_path.stat().st_mtime
+        except OSError:
+            self._config_mtime = 0
 
     def set_device(self, device, transport, setup_issue):
         identity = ""
@@ -255,7 +294,10 @@ class Backend:
         if identity != self.device_identity:
             self.applied_signature = ""
             self.per_key = None
+            self.per_key_caps = None
             self.per_key_reason = "Per-key lighting has not been probed."
+            self.frame_kind = ""
+            self.last_direct = 0.0
             self.hardware = None
             self.keymap = None
             self.conflicts = []
@@ -291,8 +333,10 @@ class Backend:
             self.per_key_reason = str(exc)[:300]
             return
         self.per_key = per_key_supported(response)
+        self.per_key_caps = per_key_capabilities(response)
         if self.per_key:
-            self.per_key_reason = "Keyboard acknowledged the per-key extension."
+            leds = self.per_key_caps.get("leds") if self.per_key_caps else None
+            self.per_key_reason = "Custom firmware accepted per-key colors (%s LEDs)." % (leds or 100)
         else:
             self.per_key_reason = (
                 "Stock VIA firmware has no per-key command (probe returned unhandled). "
@@ -326,7 +370,7 @@ class Backend:
     def apply_lighting(self, patch=None, force=False, push_ha=True):
         if patch is not None:
             self.config = validate_config({**self.config, "lighting": {**self.config["lighting"], **patch}})
-            save_config(self.config_path, self.config)
+            self._save()
         lighting = self.config["lighting"]
         effect, color = self._target(lighting)
         signature = json.dumps([self.device_identity, effect, lighting["brightness"], lighting["speed"], color])
@@ -351,7 +395,7 @@ class Backend:
                 # The keyboard changed. Drop the signature so the next sync retries the lights.
                 self.applied_signature = ""
                 raise
-        if self.config["per_key"]["push_to_keyboard"] and self.per_key:
+        if self.config["per_key"]["push_to_keyboard"] and self.per_key and not self.config["music"]["enabled"]:
             self.push_per_key()
 
     def sync(self, force=False):
@@ -370,7 +414,7 @@ class Backend:
             else:
                 merged[key] = value
         self.config = validate_config(merged)
-        save_config(self.config_path, self.config)
+        self._save()
         self.message = "Settings saved"
         self.config_error = ""
 
@@ -496,6 +540,13 @@ class Backend:
         color = self.theme_color() or self.config["lighting"]["hex"]
         return compose_highlights(self.binds, self.held, self.submap, self.active_profile(), color)
 
+    def _write_colors(self, colors):
+        for payload in per_key_set_packets(colors):
+            response = self._transact(payload)
+            if response[0] != 0xA7:
+                raise ProtocolError("Per-key write was not acknowledged")
+        self.last_direct = time.monotonic()
+
     def push_per_key(self):
         if not self.per_key:
             raise ProtocolError(self.per_key_reason)
@@ -508,11 +559,52 @@ class Backend:
             key = next(entry for entry in KEYS if entry["id"] == ident)
             scale = {"idle": 0.45, "active": 1.0, "profile": 0.85}.get(item["level"], 0.6)
             colors[key["led"]] = _scale(item["color"], scale)
-        for payload in per_key_set_packets(colors):
-            response = self._transact(payload)
-            if response[0] != 0xA7:
-                raise ProtocolError("Per-key write was not acknowledged")
+        self._write_colors(colors)
+        self.frame_kind = "highlight"
         self.message = "Per-key frame sent"
+
+    def clear_per_key(self):
+        if not self.per_key or self.transport is None:
+            self.frame_kind = ""
+            return
+        response = self.transport.transact(per_key_clear_request())
+        if not response or response[0] != CMD_PER_KEY_CLEAR:
+            raise ProtocolError("Per-key clear was not acknowledged")
+        self.frame_kind = ""
+        self.last_direct = 0.0
+
+    def push_music(self, levels):
+        from air96_audio import frame_colors, via_pulse
+        tint = self.theme_color() or self.config["lighting"]["hex"]
+        if self.per_key:
+            self._write_colors(frame_colors(levels, self.config["music"]["effect"], tint))
+            self.frame_kind = "music"
+            self.music_error = ""
+            self.message = "Music frame sent"
+            return
+        if self.transport is None:
+            raise ProtocolError("Air96 is not connected over USB")
+        pulse = via_pulse(levels, tint, self.config["lighting"]["brightness"])
+        self._transact(lighting_set(VAL_EFFECT, pulse["effect"]))
+        self._transact(lighting_set(VAL_BRIGHTNESS, pulse["brightness"]))
+        self._transact(lighting_set(VAL_COLOR, pulse["hue"], pulse["sat"]))
+        self.applied_signature = ""
+        self.frame_kind = "music"
+        self.music_error = ""
+        self.hardware = {
+            "effect": pulse["effect"], "effectName": effect_name(pulse["effect"]),
+            "brightness": pulse["brightness"], "speed": self.config["lighting"]["speed"],
+            "hue": pulse["hue"], "sat": pulse["sat"],
+        }
+        self.message = "Music pulse sent (stock firmware, not saved)"
+
+    def release_overlay(self):
+        """Leave music or a direct frame and restore the saved VIA effect."""
+        if self.per_key:
+            self.clear_per_key()
+        self.frame_kind = ""
+        if self.transport is not None:
+            self.apply_lighting(force=True, push_ha=False)
 
     def snapshot(self, include_keymap=False):
         section = self.config["home_assistant"]
@@ -547,6 +639,13 @@ class Backend:
                 "push": self.config["per_key"]["push_to_keyboard"],
                 "highlights": self.config["per_key"]["enabled"],
                 "reason": self.per_key_reason,
+                "timeoutMs": (self.per_key_caps or {}).get("timeout_ms"),
+            },
+            "music": {
+                "enabled": self.config["music"]["enabled"],
+                "effect": self.config["music"]["effect"],
+                "mode": "per-key" if self.per_key else "via",
+                "error": self.music_error,
             },
             "profile": {
                 "id": profile["id"] if profile else "",

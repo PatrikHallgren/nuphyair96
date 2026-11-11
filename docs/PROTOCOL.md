@@ -55,4 +55,4 @@ The published keymap uses names such as `RGB_MOD` that, in upstream QMK, are und
 
 Stock `via.c` answers an unknown command by echoing it with byte 0 set to `0xFF`. Probing `0xA6` is safe on that firmware. There is no stock command that sets one LED. Effects and `side.c` repaint every frame, so a one-shot color would not stick even if a command existed.
 
-The proposed extension is in [PER-KEY.md](PER-KEY.md). On-screen highlights do not need it.
+The Omarchy keymap extension is in [PER-KEY.md](PER-KEY.md). On-screen highlights do not need it. Stock firmware still answers the probe with `0xFF`.

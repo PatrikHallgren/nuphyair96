@@ -1,6 +1,6 @@
 # What was checked
 
-No Air96, no Omarchy install, and no Quickshell were available in the environment that produced this plugin. QML was not executed. Nothing was flashed.
+No Air96, no Omarchy install, and no Quickshell were available in the environment that produced this plugin. QML was not executed. Nothing was flashed onto a keyboard. The Omarchy keymap was compiled in this environment; the `.bin` is produced by `firmware/build.sh` and by the `firmware` GitHub Actions workflow (artifact `nuphy-air96-v2-omarchy`). It is not committed.
 
 ## Unit tests
 
@@ -12,7 +12,8 @@ No Air96, no Omarchy install, and no Quickshell were available in the environmen
 | Binds | `hyprctl binds -j` and `bind` / `bindd` lines, XKB `code:` keys, submaps, idle Super keys versus a held mask. Evdev bytes update only Shift, Ctrl, Alt, and Super. |
 | Profiles | Shipped Firefox, Code, and Minecraft matches. A user file with the same id overrides. VS Code import keeps the first chord. |
 | Home Assistant | `light.turn_on` body, entity and URL checks, token resolution. The token is not in the body. |
-| Protocol | 100 keys, LED indexes, VIA lighting packets, HSV, keymap offsets, the per-key probe, and the 9-LED packet split. |
+| Protocol | 100 keys, LED indexes, VIA lighting packets, HSV, keymap offsets, the per-key probe, the 9-LED packet split, clear, and the timeout model. |
+| Music | Synthetic PCM through the FFT, column and VU color mapping, and a stock VIA pulse that does not bump the EEPROM save counter. |
 | Backend | Theme follow sends solid color and skips a duplicate save. Follow off does not write. Snapshot omits the token. Stock probe refuses per-key. A fake custom ack stores a frame. Keymap apply conflicts leave the keyboard unchanged. |
 | HID discovery | The report-descriptor parser finds usage page `0xFF60` usage `0x61`. Only product ids `0x3265` and `0x3266` match, not an Air75 id. |
 | CLI and worker | `main(["--help"])` and every subcommand run with the device layer mocked. The worker reads one NDJSON request from a pipe and exits. inotify, a fake Hyprland socket, evdev `open_nodes`, and a local Home Assistant HTTP POST are exercised the same way. |
@@ -30,4 +31,4 @@ No Air96, no Omarchy install, and no Quickshell were available in the environmen
 
 ## Not available on stock firmware
 
-Per-key RGB. The panel still draws the highlights. See [PER-KEY.md](PER-KEY.md).
+Per-key RGB. The panel still draws the highlights, and music mode falls back to a global VIA pulse. See [PER-KEY.md](PER-KEY.md) and [firmware/README.md](../firmware/README.md). The keymap compiled here was not flashed, and the music recorder was not pointed at a live PipeWire monitor.

@@ -80,7 +80,7 @@ class CliTests(unittest.TestCase):
                 main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         text = stdout.getvalue()
-        for name in ("status", "devices", "sync", "apply", "import-vscode"):
+        for name in ("status", "devices", "sync", "apply", "import-vscode", "music"):
             self.assertIn(name, text)
         with redirect_stderr(stderr):
             with self.assertRaises(SystemExit) as missing:
@@ -149,6 +149,19 @@ class CliTests(unittest.TestCase):
             code, out, err = self.run_main(["import-vscode", "-"])
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out)["keys"][0]["mods"], ["ctrl"])
+
+    def test_music_toggle_saves_without_opening_a_keyboard(self):
+        code, out, err = self.run_main(["music", "on", "--effect", "vu"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("Music", out)
+        saved = json.loads((self.root / "config.json").read_text())
+        self.assertTrue(saved["music"]["enabled"])
+        self.assertEqual(saved["music"]["effect"], "vu")
+        code, out, err = self.run_main(["music", "off"])
+        self.assertEqual(code, 0, err)
+        saved = json.loads((self.root / "config.json").read_text())
+        self.assertFalse(saved["music"]["enabled"])
+        self.assertEqual(saved["music"]["effect"], "vu")
 
 
 if __name__ == "__main__":

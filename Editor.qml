@@ -27,6 +27,7 @@ Controls.ScrollView {
   property bool haEnabled: false
   property bool modifierListen: false
   property bool pushKeys: false
+  property bool musicOn: false
   implicitHeight: body.implicitHeight
   contentWidth: availableWidth
   clip: true
@@ -54,6 +55,7 @@ Controls.ScrollView {
     haEnabled = !!ha.enabled
     modifierListen = !!(snapshot.modifiers && snapshot.modifiers.enabled)
     pushKeys = !!(snapshot.perKey && snapshot.perKey.push)
+    musicOn = !!(snapshot.music && snapshot.music.enabled)
     loaded = true
   }
 
@@ -465,6 +467,22 @@ Controls.ScrollView {
           root.pushKeys = !root.pushKeys
           if (root.service) root.service.request("settings", {per_key: {push_to_keyboard: root.pushKeys, enabled: true}})
         }
+      }
+      Ui.Toggle {
+        Layout.fillWidth: true
+        label: "Music lighting"
+        checked: root.musicOn
+        foreground: Commons.Color.popups.text
+        onClicked: {
+          root.musicOn = !root.musicOn
+          if (root.service) root.service.request("settings", {music: {enabled: root.musicOn}})
+        }
+      }
+      PlainText {
+        Layout.fillWidth: true
+        font.pixelSize: Commons.Style.font.caption
+        opacity: 0.75
+        text: (root.snapshot.music && root.snapshot.music.error) || "Music follows the PipeWire or PulseAudio monitor. Custom firmware paints each key. Stock firmware pulses the VIA color about four times a second and does not save that pulse."
       }
     }
   }

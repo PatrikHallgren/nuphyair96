@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 
+from air96_audio import MusicSession
 from air96_backend import Backend, file_lock
 from air96_binds import parse_hyprctl_binds
 from air96_ha import HomeAssistantError
@@ -264,6 +265,70 @@ class ThemeWatch:
         os.close(self.fd)
 
 
+def drive_lights(backend, session, state, now):
+    """Resend highlights before the firmware timeout, and stream music frames."""
+    backend.reload_if_external()
+    music = bool(backend.config["music"]["enabled"])
+    pushing = bool(backend.config["per_key"]["push_to_keyboard"] and backend.per_key and backend.transport)
+    if music:
+        if state["music"] and not session.running:
+            state["music"] = False
+            state["retry"] = now + 2
+        if not state["music"]:
+            if now < state["retry"]:
+                return
+            try:
+                session.start()
+            except OSError as exc:
+                backend.music_error = str(exc)[:300]
+                state["retry"] = now + 2
+                return
+            state["music"] = True
+            backend.music_error = ""
+        try:
+            levels = session.poll()
+        except OSError as exc:
+            backend.music_error = str(exc)[:300]
+            levels = None
+        if session.error:
+            backend.music_error = session.error
+        interval = 0.1 if backend.per_key else 0.25
+        if levels is not None and now - state["last_music"] >= interval:
+            try:
+                with file_lock(backend.state_dir):
+                    backend.push_music(levels)
+            except (ProtocolError, OSError, HidError, TimeoutError) as exc:
+                backend.music_error = str(exc)[:300]
+            state["last_music"] = now
+        state["push"] = pushing
+        return
+    if state["music"]:
+        session.stop()
+        state["music"] = False
+        try:
+            with file_lock(backend.state_dir):
+                backend.release_overlay()
+        except (ProtocolError, OSError, HidError, TimeoutError) as exc:
+            backend.error = str(exc)[:300]
+        state["push"] = pushing
+        return
+    if state["push"] and not pushing and backend.frame_kind == "highlight":
+        try:
+            with file_lock(backend.state_dir):
+                backend.clear_per_key()
+                if backend.transport is not None:
+                    backend.apply_lighting(force=True, push_ha=False)
+        except (ProtocolError, OSError, HidError, TimeoutError) as exc:
+            backend.error = str(exc)[:300]
+    state["push"] = pushing
+    if pushing and now - backend.last_direct >= 0.9:
+        try:
+            with file_lock(backend.state_dir):
+                backend.push_per_key()
+        except (ProtocolError, OSError, HidError, TimeoutError) as exc:
+            backend.error = str(exc)[:300]
+
+
 def serve(backend=None, stdin=None):
     backend = backend or Backend()
     source = sys.stdin if stdin is None else stdin
@@ -305,6 +370,8 @@ def serve(backend=None, stdin=None):
         deadline = None
         buffer = b""
         next_discovery = time.monotonic() + FALLBACK_SECONDS
+        session = MusicSession()
+        light_state = {"music": False, "push": False, "last_music": 0.0, "retry": 0.0}
 
         def emit(request):
             with file_lock(backend.state_dir):
@@ -316,6 +383,10 @@ def serve(backend=None, stdin=None):
         emit({"action": "status"})
         while True:
             timeout = 1.0
+            if backend.config["music"]["enabled"]:
+                timeout = 0.1
+            elif backend.config["per_key"]["push_to_keyboard"] and backend.per_key:
+                timeout = 0.5
             if deadline is not None:
                 timeout = min(timeout, max(0, deadline - time.monotonic()))
             timeout = min(timeout, max(0, next_discovery - time.monotonic()))
@@ -339,6 +410,7 @@ def serve(backend=None, stdin=None):
                 else:
                     chunk = os.read(source.fileno(), MAX_REQUEST)
                     if not chunk:
+                        session.stop()
                         _close_transport(backend)
                         modifiers.close()
                         hypr.close()
@@ -396,6 +468,7 @@ def serve(backend=None, stdin=None):
                 next_discovery = now + FALLBACK_SECONDS
                 if hypr.socket is None and hypr.connect():
                     selector.register(hypr.socket, selectors.EVENT_READ, "hypr")
+            drive_lights(backend, session, light_state, now)
 
 
 if __name__ == "__main__":
