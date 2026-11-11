@@ -15,6 +15,7 @@ import sys
 from air96_backend import Backend, file_lock
 from air96_ha import HomeAssistantError, prepare_token
 from air96_hid import HidError, set_debug
+from air96_protocol import ProtocolError
 from air96_profiles import import_vscode_keybindings
 from air96_worker import refresh_device
 
@@ -27,9 +28,22 @@ def build(args):
 
 
 def command_status(backend, _args):
+    from air96_backend import describe_runtime
     with file_lock(backend.state_dir):
         refresh_device(backend)
-        print(json.dumps(backend.snapshot(), indent=2, sort_keys=True))
+        from air96_worker import refresh_binds
+        refresh_binds(backend)
+        mods = backend.read_keyboard_mods()
+        backend.mods_from_keyboard = mods is not None
+        if mods is not None:
+            backend.held = mods
+        body = backend.snapshot()
+        report = describe_runtime(backend)
+        body["diagnosis"] = report["lines"]
+        body["runtime"] = report["runtime"]
+        print(json.dumps(body, indent=2, sort_keys=True))
+    for line in report["lines"]:
+        print(line, file=sys.stderr)
 
 
 def command_devices(_backend, _args):
@@ -69,6 +83,10 @@ def command_apply(backend, args):
 
 
 def command_music(backend, args):
+    if args.state == "run":
+        if args.music_debug:
+            set_debug(True)
+        return command_music_run(backend)
     patch = {"enabled": args.state == "on"}
     if args.effect:
         patch["effect"] = args.effect
@@ -76,7 +94,82 @@ def command_music(backend, args):
         backend.update_settings({"music": patch})
     print(backend.message or "ok")
     if args.state == "on":
-        print("Music mode is saved. The bar plugin applies it while it is running.")
+        print("Music mode is saved. The bar worker plays it from the speaker monitor.")
+        print("If the keys stay still: python3 air96_cli.py music run --debug")
+    return 0
+
+
+def command_push(backend, args):
+    enabled = args.state == "on"
+    with file_lock(backend.state_dir):
+        backend.update_settings({"per_key": {"push_to_keyboard": enabled, "enabled": True}})
+    print(backend.message or "ok")
+    if enabled:
+        print("Per-key push is on. Super highlights use the keyboard's modifier report. The input udev rule is not required.")
+        print("Turn music off first if the visualizer is using the keys: python3 air96_cli.py music off")
+    else:
+        print("Per-key push is off. The worker will not send highlight colors.")
+    return 0
+
+
+def run_music_debug(backend, session, cycles=None, pause=None, emit=print):
+    """Print levels and push frames. ``cycles`` bounds a test; a live run stops on Ctrl-C."""
+    emit("Recording: " + " ".join(getattr(session.capture, "command", []) or []))
+    emit("Source is the speaker monitor, not the microphone. Silence should go dark. A beat should move rms and bass.")
+    count = 0
+    while cycles is None or count < cycles:
+        levels = session.poll()
+        capture = session.capture
+        bytes_total = getattr(capture, "bytes_total", 0)
+        if levels is None:
+            emit(f"waiting bytes={bytes_total} stalled={getattr(capture, 'stalled', False)} {session.error}")
+        else:
+            sent = "keyboard not connected"
+            if backend.transport is not None:
+                try:
+                    backend.push_music(levels)
+                    sent = backend.message or "sent"
+                except (OSError, TimeoutError, ProtocolError, HidError) as exc:
+                    sent = str(exc)[:200]
+            emit(
+                "rms={rms:.3f} bass={bass:.3f} loud={loud:.3f} silent={silent} bytes={bytes} {sent}".format(
+                    rms=float(levels.get("rms") or 0),
+                    bass=float(levels.get("bass") or 0),
+                    loud=float(levels.get("loudness") or 0),
+                    silent=bool(levels.get("silent")),
+                    bytes=bytes_total,
+                    sent=sent,
+                )
+            )
+        count += 1
+        if cycles is not None and count >= cycles:
+            break
+        if pause:
+            pause()
+    return count
+
+
+def command_music_run(backend):
+    from air96_audio import MusicSession
+    refresh_device(backend)
+    session = MusicSession()
+    try:
+        session.start()
+    except OSError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        run_music_debug(backend, session, pause=lambda: __import__("time").sleep(0.1))
+    except KeyboardInterrupt:
+        print("Stopped.")
+    finally:
+        session.stop()
+        if backend.transport is not None:
+            try:
+                with file_lock(backend.state_dir):
+                    backend.release_overlay()
+            except (OSError, TimeoutError, ProtocolError, HidError):
+                pass
     return 0
 
 
@@ -138,8 +231,11 @@ def parser():
     apply.add_argument("--speed", type=int)
     apply.add_argument("--follow", type=lambda value: value.lower() in ("1", "true", "yes", "on"))
     music = commands.add_parser("music")
-    music.add_argument("state", choices=("on", "off"))
+    music.add_argument("state", choices=("on", "off", "run"))
     music.add_argument("--effect", choices=("spectrum", "vu"))
+    music.add_argument("--debug", action="store_true", dest="music_debug", help="With run, print each HID report as well as the levels")
+    push = commands.add_parser("push", help="Turn per-key highlight sending on or off")
+    push.add_argument("state", choices=("on", "off"))
     ha_token = commands.add_parser("ha-token", help="Prompt for a Home Assistant token and save it")
     ha_token.add_argument("--file", help="Token file to write. Defaults to the configured token_file or ha-token")
     commands.add_parser("ha-test", help="Push the current color once and print the HTTP status")
@@ -162,6 +258,7 @@ def main(argv=None):
         "apply": command_apply,
         "import-vscode": command_import_vscode,
         "music": command_music,
+        "push": command_push,
         "ha-token": command_ha_token,
         "ha-test": command_ha_test,
     }

@@ -32,4 +32,4 @@ No Air96, no Omarchy install, and no Quickshell were available in the environmen
 
 ## Not available on stock firmware
 
-Per-key RGB. The panel still draws the highlights, and music mode falls back to a global VIA pulse. See [PER-KEY.md](PER-KEY.md) and [firmware/README.md](../firmware/README.md). The keymap compiled here was not flashed, and the music recorder was not pointed at a live PipeWire monitor.
+Per-key RGB on stock firmware. The panel still draws the highlights, and music mode falls back to a global VIA pulse. See [PER-KEY.md](PER-KEY.md) and [firmware/README.md](../firmware/README.md). A keyboard that answers the `0xA6` probe is running the Omarchy keymap; status says that from the probe, not from a fixed sentence. The music recorder targets the speaker monitor (`@DEFAULT_MONITOR@`), not the microphone.

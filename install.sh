@@ -22,11 +22,14 @@ Installs ~/.config/omarchy/hooks/theme-set.d/50-air96-sync so Omarchy runs
 \`python3 $CLI sync\` after every theme change. The bar plugin is not required.
 
   --no-plugin   Hook only. Theme follow works from the CLI.
-  --plugin      Also link this checkout to ~/.config/omarchy/plugins/local.nuphy-air96
+  --plugin      Link this checkout to ~/.config/omarchy/plugins/local.nuphy-air96,
+                restart the bar worker, and turn per-key push on.
   --uninstall   Remove the hook, the recorded CLI path, and a plugin symlink
-                this script created. Config and a real plugin directory stay.
+                this script created. Config and a plugin backup stay.
 
-Default is the hook and the plugin link. Enable the bar with:
+A plugin directory Omarchy copied is moved aside and replaced with a link to
+this checkout, so git pull updates the bar. Default is the hook and that link.
+Enable the bar with:
   omarchy plugin enable local.nuphy-air96
 EOF
 }
@@ -52,21 +55,48 @@ install_hook() {
   echo "Follow must be on (\`python3 air96_cli.py apply --follow on\`) or sync does nothing."
 }
 
-install_plugin() {
-  if [ -e "$PLUGIN_LINK" ] && [ ! -L "$PLUGIN_LINK" ]; then
-    if same_path "$PLUGIN_LINK" "$ROOT"; then
-      echo "Bar plugin is already this checkout: $PLUGIN_LINK"
-    else
-      echo "Bar plugin already installed at $PLUGIN_LINK (left in place)."
-    fi
-    echo "Enable it with: omarchy plugin enable local.nuphy-air96"
-    return 0
+restart_worker() {
+  found=0
+  for dir in /proc/[0-9]*; do
+    [ -r "$dir/cmdline" ] || continue
+    cmd=$(tr '\0' ' ' < "$dir/cmdline" 2>/dev/null || true)
+    case "$cmd" in
+      *air96_worker.py*)
+        pid=${dir#/proc/}
+        if kill "$pid" 2>/dev/null; then
+          echo "Stopped bar worker pid $pid so it reloads this checkout."
+          found=1
+        fi
+        ;;
+    esac
+  done
+  if [ "$found" -eq 0 ]; then
+    echo "No air96_worker.py is running. Enable the plugin, then restart the shell if the bar is not up."
+  else
+    echo "The bar starts the worker again in a few seconds from $PLUGIN_LINK."
   fi
+}
+
+install_plugin() {
   mkdir -p "$PLUGIN_DIR"
-  ln -sfn "$ROOT" "$PLUGIN_LINK"
-  echo "Bar plugin link: $PLUGIN_LINK"
+  if [ -L "$PLUGIN_LINK" ] || [ ! -e "$PLUGIN_LINK" ]; then
+    ln -sfn "$ROOT" "$PLUGIN_LINK"
+    echo "Bar plugin link: $PLUGIN_LINK -> $ROOT"
+  elif same_path "$PLUGIN_LINK" "$ROOT"; then
+    echo "Bar plugin is this checkout: $PLUGIN_LINK"
+  else
+    backup="${PLUGIN_LINK}.previous"
+    rm -rf "$backup"
+    mv "$PLUGIN_LINK" "$backup"
+    ln -sfn "$ROOT" "$PLUGIN_LINK"
+    echo "Replaced the separate plugin copy with a link to this checkout."
+    echo "Previous copy: $backup"
+    echo "git pull in this checkout is what the bar runs. A second clone is not used."
+  fi
   echo "Enable it with: omarchy plugin enable local.nuphy-air96"
-  echo "Then restart the shell. The icon target is: omarchy-shell air96 toggle"
+  echo "The icon target is: omarchy-shell air96 toggle"
+  restart_worker
+  python3 "$CLI" push on
 }
 
 uninstall() {
