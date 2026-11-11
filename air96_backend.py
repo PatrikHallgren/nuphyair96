@@ -426,13 +426,14 @@ class Backend:
         payload = turn_on_payload(section["entities"], color, brightness)
         prepared = service_request(section["url"], token, payload)
         try:
-            send_ha(prepared)
+            result = send_ha(prepared)
         except HomeAssistantError as exc:
             self.ha_error = str(exc)[:400]
             raise
         self.ha_error = ""
         self.ha_pushed = color
         self.message = f"Home Assistant lights set to {color}"
+        return result
 
     def load_keymap(self):
         layers = parse_layer_count(self._transact(layer_count_request()))

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,7 @@ from unittest.mock import patch
 import support  # noqa: F401
 from air96_backend import Backend
 from air96_cli import main
+from air96_ha import HomeAssistantError
 from support import ROOT, FakeKeyboard
 
 
@@ -80,7 +82,7 @@ class CliTests(unittest.TestCase):
                 main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         text = stdout.getvalue()
-        for name in ("status", "devices", "sync", "apply", "import-vscode", "music"):
+        for name in ("status", "devices", "sync", "apply", "import-vscode", "music", "ha-token", "ha-test"):
             self.assertIn(name, text)
         with redirect_stderr(stderr):
             with self.assertRaises(SystemExit) as missing:
@@ -162,6 +164,49 @@ class CliTests(unittest.TestCase):
         saved = json.loads((self.root / "config.json").read_text())
         self.assertFalse(saved["music"]["enabled"])
         self.assertEqual(saved["music"]["effect"], "vu")
+
+    def test_ha_token_sanitizes_and_ha_test_reports_status(self):
+        secret = "long-lived-token-value"
+        setup = self.backend()
+        setup.update_settings({"home_assistant": {
+            "url": "http://ha.example",
+            "entities": ["light.desk"],
+        }})
+        pasted = "\x1b[200~" + secret + "\x1b[201~\n"
+        with patch("air96_cli.getpass.getpass", return_value=pasted):
+            code, out, err = self.run_main(["ha-token"])
+        self.assertEqual(code, 0, err)
+        self.assertNotIn(secret, out + err)
+        saved = json.loads((self.root / "config.json").read_text())
+        path = Path(saved["home_assistant"]["token_file"])
+        self.assertEqual(path.read_text(), secret + "\n")
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual(saved["home_assistant"]["token"], "")
+
+        def fake_send(prepared, opener=None, timeout=5):
+            self.assertEqual(prepared["headers"]["Authorization"], "Bearer " + secret)
+            self.assertNotIn(secret, prepared["body"].decode())
+            return {"status": 200, "body": "[]"}
+
+        with patch("air96_backend.send_ha", fake_send):
+            code, out, err = self.run_main(["ha-test"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("HTTP 200", out)
+        self.assertNotIn(secret, out + err)
+
+        with patch("air96_backend.send_ha", side_effect=HomeAssistantError("Home Assistant returned HTTP 401")):
+            code, out, err = self.run_main(["ha-test"])
+        self.assertEqual(code, 1)
+        self.assertIn("HTTP 401", err)
+        self.assertNotIn(secret, out + err)
+
+        junk = "UNIQUESECRETVALUE is not a single token"
+        with patch("air96_cli.getpass.getpass", return_value=junk):
+            code, out, err = self.run_main(["ha-token"])
+        self.assertEqual(code, 1)
+        self.assertIn("malformed", err)
+        self.assertNotIn("UNIQUESECRETVALUE", out + err)
+        self.assertEqual(path.read_text(), secret + "\n")
 
 
 if __name__ == "__main__":

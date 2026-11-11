@@ -187,7 +187,7 @@ class SmokeTests(unittest.TestCase):
         self.assertTrue(unknown.get("protocolError"))
         self.assertIn("Invalid worker request", unknown["error"])
         pushed = next(item for item in lines if item.get("requestId") == 5)
-        self.assertIn("light", pushed["error"])
+        self.assertIn("token is missing", pushed["error"])
         self.assertNotIn('"token":', stdout.getvalue())
 
 

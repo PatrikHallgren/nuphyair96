@@ -122,12 +122,26 @@ Apply writes only the staged keys. It re-reads first, and if a cell changed sinc
 
 Optional. When enabled, a successful keyboard color write also POSTs `light/turn_on` with `rgb_color` and `brightness`. You can push once from the panel without changing the keyboard.
 
-The token is the `HA_TOKEN` environment variable, a `token_file`, or `token` in the config. Prefer the environment or a file. The panel never shows the token, and status JSON does not contain it. Only `http` and `https` URLs are accepted. Entity ids must look like `light.desk`.
+The token is an inline config value, then the `HA_TOKEN` environment variable, then `token_file`. Prefer the file. The panel never shows the token, and status JSON does not contain it. Only `http` and `https` URLs are accepted. Entity ids must look like `light.desk`.
+
+Save the token with the CLI. The prompt does not echo. Paste markers from the terminal (`ESC[200~` / `ESC[201~`) and surrounding whitespace are removed before the file is written, mode `0600`.
 
 ```sh
-export HA_TOKEN=...   # long-lived token, not a shell history line you commit
-python3 air96_cli.py apply --hex '#7aa2f7' --effect 1
+python3 air96_cli.py ha-token
+python3 air96_cli.py ha-test
 ```
+
+`ha-test` pushes the current color once and prints the HTTP status. It does not print the token. Set the URL and at least one `light.*` entity in the config or the panel first.
+
+Do not fill the file with `read -rsp`. That keeps bracketed-paste bytes in the token. A file of those bytes used to be reported as a missing token.
+
+The three failures are separate, and none of them includes the token text:
+
+- missing: no inline token, no environment value, and an empty file
+- malformed: after the paste markers are removed, the token is too short or still has whitespace or control characters
+- unreadable: the token file cannot be opened
+
+`HA_TOKEN` in the environment overrides the file. `ha-token` says so when that variable is set, without printing its value.
 
 ## Keybind highlights
 

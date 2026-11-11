@@ -4,7 +4,9 @@ import unittest
 import support  # noqa: F401
 from air96_ha import (
     HomeAssistantError,
+    prepare_token,
     resolve_token,
+    sanitize_token,
     send,
     service_request,
     turn_on_payload,
@@ -64,6 +66,58 @@ class HaTests(unittest.TestCase):
         self.assertEqual(captured["url"], "https://ha.example/api/services/light/turn_on")
         self.assertEqual(captured["timeout"], 2)
         self.assertIn("from-env-token", captured["auth"])
+
+    def test_paste_markers_are_removed_and_bad_tokens_stay_unprinted(self):
+        secret = "a-real-token-value"
+        wrapped = "\x1b[200~  " + secret + "  \x1b[201~\n"
+        self.assertEqual(sanitize_token(wrapped), secret)
+        self.assertEqual(prepare_token(wrapped), secret)
+        path = self._token_file(wrapped)
+        self.assertEqual(resolve_token({}, "HA_TOKEN", str(path)), secret)
+        payload = turn_on_payload(["light.desk"], "#ffffff", 10)
+        prepared = service_request("http://ha.example", wrapped, payload)
+        self.assertEqual(prepared["headers"]["Authorization"], "Bearer " + secret)
+        self.assertNotIn(secret, prepared["body"].decode())
+
+        junk = "UNIQUESECRETVALUE\x01still-bad"
+        with self.assertRaises(HomeAssistantError) as malformed:
+            prepare_token("\x1b[200~" + junk + "\x1b[201~")
+        self.assertIn("malformed", str(malformed.exception))
+        self.assertIn("control", str(malformed.exception))
+        self.assertNotIn("UNIQUESECRETVALUE", str(malformed.exception))
+
+        with self.assertRaises(HomeAssistantError) as short:
+            prepare_token("abc")
+        self.assertIn("too short", str(short.exception))
+        self.assertNotIn("abc", str(short.exception))
+
+        with self.assertRaises(HomeAssistantError) as spaces:
+            prepare_token("token value that is long enough")
+        self.assertIn("whitespace", str(spaces.exception))
+        self.assertNotIn("token value", str(spaces.exception))
+
+        with self.assertRaises(HomeAssistantError) as missing:
+            prepare_token("  \n")
+        self.assertIn("missing", str(missing.exception))
+        self.assertNotIn("malformed", str(missing.exception))
+
+        with self.assertRaises(HomeAssistantError) as markers:
+            prepare_token("\x1b[200~\x1b[201~\n")
+        self.assertIn("malformed", str(markers.exception))
+
+        with self.assertRaises(HomeAssistantError) as unreadable:
+            resolve_token({}, "HA_TOKEN", str(path.parent / "missing-token"))
+        self.assertIn("unreadable", str(unreadable.exception))
+        self.assertNotIn(secret, str(unreadable.exception))
+
+    def _token_file(self, text):
+        import tempfile
+        from pathlib import Path
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "ha-token"
+        path.write_text(text)
+        return path
 
 
 if __name__ == "__main__":
