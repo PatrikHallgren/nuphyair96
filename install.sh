@@ -30,7 +30,9 @@ Installs ~/.config/omarchy/hooks/theme-set.d/50-air96-sync so Omarchy runs
 A plugin directory Omarchy copied is moved aside and replaced with a link to
 this checkout, so git pull updates the bar. Default is the hook and that link.
 Enable the bar with:
-  omarchy plugin enable local.nuphy-air96
+  omarchy plugin enable local.nuphy-air96 --yes
+  python3 air96_cli.py doctor
+  python3 air96_cli.py panel
 EOF
 }
 
@@ -93,9 +95,10 @@ install_plugin() {
     echo "Previous copy: $backup"
     echo "git pull in this checkout is what the bar runs. A second clone is not used."
   fi
-  echo "Enable it with: omarchy plugin enable local.nuphy-air96"
-  echo "The icon target is: omarchy-shell air96 toggle"
+  echo "The icon target, once the widget is on the bar, is: omarchy-shell air96 toggle"
   restart_worker
+  echo "Registering the bar widget and checking that the shell can see it:"
+  python3 "$CLI" doctor --register || echo "The plugin files are installed. The bar does not list the icon yet. The doctor lines above say the next command."
 }
 
 uninstall() {

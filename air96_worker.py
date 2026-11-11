@@ -319,8 +319,15 @@ def serve(backend=None, stdin=None):
         except BlockingIOError as exc:
             raise RuntimeError("An Air96 worker is already running") from exc
         refresh_device(backend)
-        if backend.config["lighting"]["follow_theme"] and backend.transport is not None:
-            with file_lock(backend.state_dir):
+        screen_now = False
+        try:
+            screen_now = screensaver_running()
+        except OSError:
+            screen_now = False
+        with file_lock(backend.state_dir):
+            if backend.config["screensaver"]["enabled"] and screen_now:
+                backend.note_screensaver(True)
+            elif backend.config["lighting"]["follow_theme"] and backend.transport is not None:
                 execute(backend, {"action": "sync", "config": {"force": True}})
         selector = selectors.DefaultSelector()
         selector.register(source, selectors.EVENT_READ, "input")
@@ -388,7 +395,9 @@ def serve(backend=None, stdin=None):
                     refresh_device(backend)
                 if "theme" in pending or "device" in pending:
                     ha = backend.config["home_assistant"]
-                    if backend.config["lighting"]["follow_theme"]:
+                    # sync keeps Breathing while the screensaver is up. It does not
+                    # write solid color over the show, and it does nothing when follow is off.
+                    if backend.screensaver_active or backend.config["lighting"]["follow_theme"]:
                         emit({"action": "sync"})
                     elif ha["enabled"] and ha["follow_theme"]:
                         emit({"action": "ha-push"})

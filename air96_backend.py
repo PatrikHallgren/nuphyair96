@@ -24,7 +24,7 @@ from air96_ha import (
 )
 from air96_keycodes import catalog, keycode_name, keycode_short
 from air96_layout import KEYS, LAYER_COUNT, LAYERS, LED_COUNT, MATRIX_COLS, MATRIX_ROWS
-from air96_screensaver import BREATHING_EFFECT
+from air96_screensaver import BREATHING_EFFECT, SHOW_SPEED
 from air96_protocol import (
     BUFFER_CHUNK,
     CMD_PER_KEY_CLEAR,
@@ -196,6 +196,9 @@ def validate_config(raw):
         merged = {**base["screensaver"], **section}
         merged["enabled"] = _bool(merged["enabled"], "screensaver.enabled")
         merged["effect"] = _byte(merged["effect"], "screensaver.effect")
+        # The first theme plugin stored 4, which is Gradient Left/Right on this firmware.
+        if merged["effect"] == 4:
+            merged["effect"] = BREATHING_EFFECT
         if merged["effect"] >= len(EFFECTS):
             raise ValueError("screensaver.effect is not a known RGB effect")
         config["screensaver"] = merged
@@ -264,6 +267,7 @@ class Backend:
         self.frame_kind = ""
         self.last_direct = 0.0
         self.screensaver_active = False
+        self.screensaver_preview = False
         self._config_mtime = 0
         self._load()
 
@@ -377,11 +381,15 @@ class Backend:
             return color
         return lighting["hex"]
 
+    def showing_screensaver(self):
+        if self.screensaver_preview:
+            return True
+        return bool(self.config["screensaver"]["enabled"] and self.screensaver_active)
+
     def active_effect(self):
-        """Solid color, or the screensaver animation while that process is up."""
-        show = self.config["screensaver"]["enabled"] and self.screensaver_active
-        if show:
-            return int(self.config["screensaver"]["effect"])
+        """Solid color, or Breathing while the screensaver show is up."""
+        if self.showing_screensaver():
+            return BREATHING_EFFECT
         return SOLID_EFFECT
 
     def apply_lighting(self, patch=None, force=False, push_ha=True, save=None):
@@ -392,27 +400,28 @@ class Backend:
         color = self.keyboard_color()
         effect = self.active_effect()
         showing = effect != SOLID_EFFECT
+        speed = SHOW_SPEED if showing else int(lighting["speed"])
         if save is None:
             save = not showing
         signature = json.dumps([
-            self.device_identity, effect, lighting["brightness"], lighting["speed"], color, showing,
+            self.device_identity, effect, lighting["brightness"], speed, color, showing,
         ])
         if not force and signature == self.applied_signature:
             self.message = "Lighting already matches this theme"
             return
-        if self.per_key:
+        if self.per_key and not showing:
             self.clear_per_key()
         hue, sat = hex_to_qmk_hs(color)
         self._transact(lighting_set(VAL_EFFECT, effect))
         self._transact(lighting_set(VAL_BRIGHTNESS, lighting["brightness"]))
-        self._transact(lighting_set(VAL_SPEED, lighting["speed"]))
+        self._transact(lighting_set(VAL_SPEED, speed))
         self._transact(lighting_set(VAL_COLOR, hue, sat))
         if save:
             self._transact(lighting_save())
         self.applied_signature = signature
         self.hardware = {"effect": effect, "effectName": effect_name(effect), "brightness": lighting["brightness"],
-                         "speed": lighting["speed"], "hue": hue, "sat": sat}
-        self.message = f"Backlight set to {color} ({effect_name(effect)})"
+                         "speed": speed, "hue": hue, "sat": sat}
+        self.message = f"Backlight set to {color} ({effect_name(effect)}, speed {speed})"
         self.error = ""
         if push_ha and self.config["home_assistant"]["enabled"]:
             try:
@@ -429,8 +438,31 @@ class Backend:
         self.screensaver_active = active
         self.applied_signature = ""
         if self.transport is not None:
+            if active and self.per_key:
+                self.clear_per_key()
             self.apply_lighting(force=True, push_ha=False, save=False)
         return True
+
+    def preview_screensaver(self, seconds=10, sleep=None):
+        """Run Breathing, then put the solid color back. Neither write is saved."""
+        if sleep is None:
+            import time
+            sleep = time.sleep
+        self.screensaver_preview = True
+        self.applied_signature = ""
+        try:
+            if self.per_key:
+                self.clear_per_key()
+            self.apply_lighting(force=True, push_ha=False, save=False)
+            shown = dict(self.hardware or {})
+            if seconds:
+                sleep(max(0, float(seconds)))
+        finally:
+            self.screensaver_preview = False
+            self.applied_signature = ""
+            if self.transport is not None:
+                self.apply_lighting(force=True, push_ha=False, save=False)
+        return shown
 
     def sync(self, force=False):
         if not self.config["lighting"]["follow_theme"]:
@@ -787,7 +819,10 @@ def describe_runtime(backend, heartbeat=None, processes=None):
         lines.append(f"Keyboard theme follow is off. The color is {stored}.")
     if backend.config["screensaver"]["enabled"]:
         state = "running" if backend.screensaver_active else "waiting"
-        lines.append(f"Screensaver light show is on ({state}). It uses {effect_name(backend.config['screensaver']['effect'])} and is not saved.")
+        lines.append(
+            f"Screensaver light show is on ({state}). Breathing is effect {BREATHING_EFFECT} "
+            f"at speed {SHOW_SPEED}. It is not saved, and the worker does not paint solid color over it."
+        )
     section = backend.config["home_assistant"]
     if section["enabled"]:
         if section["follow_theme"]:

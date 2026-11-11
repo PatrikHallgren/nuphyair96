@@ -15,7 +15,7 @@ Raw HID, 32-byte reports, no report id, same usage page as VIA (`FF60` / `61`). 
 | Clear `0xA8` | `A96K` | Drops the overlay and returns to the normal matrix effect. Nothing is written to EEPROM |
 | Mods `0xA9` | `A96K` | Byte 5 is the Hyprland modmask: shift 1, ctrl 4, alt 8, super 64. Byte 6 is the raw QMK modifier byte |
 
-The plugin that ships with this repo does not use the overlay. It sends clear (`0xA8`) when the probe succeeds, then sets the VIA solid color, brightness, and, while the Omarchy screensaver is running, the Breathing effect. That works on the keymap already flashed from the earlier per-key image. Do not reflash for theme follow, the lamp, or the screensaver.
+The plugin that ships with this repo does not use the overlay. It sends clear (`0xA8`) when the probe succeeds, then sets the VIA solid color and brightness. While the Omarchy screensaver is running it selects Breathing, which is effect 5 on this keymap because `alphas_mods` is enabled in `keyboard.json`. Effect 4 is Gradient Left/Right and does not pulse. Do not reflash for theme follow, the lamp, or the screensaver.
 
 A probe with version byte `0` also clears. A probe while the overlay is already up refreshes the 2 second timer without changing the picture. If the host stops sending for 2 seconds, or the link leaves USB (unplug, suspend, Bluetooth, or the dongle), the overlay drops. Fn readable lights from ablasik's firmware are unchanged.
 

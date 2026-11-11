@@ -55,9 +55,11 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(key_by_id("kp_enter")["h"], 2)
 
     def test_via_lighting_packets(self):
-        self.assertEqual(len(EFFECTS), 41)
+        self.assertEqual(len(EFFECTS), 42)
         self.assertEqual(EFFECTS[0], "All Off")
         self.assertEqual(EFFECTS[1], "Solid Color")
+        self.assertEqual(EFFECTS[2], "Alphas Mods")
+        self.assertEqual(EFFECTS[5], "Breathing")
         self.assertEqual(EFFECTS[-1], "Solid MultiSplash")
         color = lighting_set(4, 212, 255)
         self.assertEqual(color[:5], bytes((0x07, 0x03, 0x04, 212, 255)))

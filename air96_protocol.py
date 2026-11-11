@@ -49,11 +49,13 @@ PER_KEY_FLAG_TIMEOUT = 0x01
 PER_KEY_FLAG_SUPER = 0x02
 PER_KEY_FLAG_CLEAR = 0x04
 
-# Dropdown order from "NuPhy Air96 V2 via3.json" shipped in the firmware tree.
-# Index 0 disables the matrix. Index 1 is solid color. Names are NuPhy's.
+# Enum order from the flashed Omarchy keymap. keyboard.json enables
+# alphas_mods, so Breathing is 5. Index 4 is Gradient Left/Right, which
+# changes the color and does not pulse. Index 0 disables the matrix.
 EFFECTS = (
     "All Off",
     "Solid Color",
+    "Alphas Mods",
     "Gradient Up/Down",
     "Gradient Left/Right",
     "Breathing",
