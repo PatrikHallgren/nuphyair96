@@ -6,11 +6,14 @@ to call from an Omarchy theme hook before the bar plugin is running.
 """
 
 import argparse
+import getpass
 import json
+import os
+from pathlib import Path
 import sys
 
 from air96_backend import Backend, file_lock
-from air96_ha import HomeAssistantError
+from air96_ha import HomeAssistantError, prepare_token
 from air96_hid import HidError
 from air96_profiles import import_vscode_keybindings
 from air96_worker import refresh_device
@@ -77,6 +80,37 @@ def command_music(backend, args):
     return 0
 
 
+def command_ha_token(backend, args):
+    raw = getpass.getpass("Home Assistant token: ")
+    token = prepare_token(raw)
+    section = backend.config["home_assistant"]
+    path = Path(args.file or section["token_file"] or (backend.config_path.parent / "ha-token"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(descriptor, (token + "\n").encode("utf-8"))
+    finally:
+        os.close(descriptor)
+    os.chmod(path, 0o600)
+    with file_lock(backend.state_dir):
+        backend.update_settings({"home_assistant": {"token_file": str(path), "token": ""}})
+    print(f"Saved Home Assistant token to {path}")
+    env_name = section["token_env"] or "HA_TOKEN"
+    if backend.environ.get(env_name):
+        print(f"{env_name} is set and overrides the token file.", file=sys.stderr)
+    return 0
+
+
+def command_ha_test(backend, _args):
+    with file_lock(backend.state_dir):
+        result = backend.push_home_assistant()
+    print(f"Home Assistant returned HTTP {result['status']}")
+    body = (result.get("body") or "").strip()
+    if body:
+        print(body)
+    return 0
+
+
 def command_import_vscode(_backend, args):
     text = sys.stdin.read() if args.path == "-" else open(args.path, encoding="utf-8").read()
     profile = import_vscode_keybindings(text, profile_id=args.id, name=args.name, classes=args.match_class)
@@ -102,6 +136,9 @@ def parser():
     music = commands.add_parser("music")
     music.add_argument("state", choices=("on", "off"))
     music.add_argument("--effect", choices=("spectrum", "vu"))
+    ha_token = commands.add_parser("ha-token", help="Prompt for a Home Assistant token and save it")
+    ha_token.add_argument("--file", help="Token file to write. Defaults to the configured token_file or ha-token")
+    commands.add_parser("ha-test", help="Push the current color once and print the HTTP status")
     imported = commands.add_parser("import-vscode")
     imported.add_argument("path", help="keybindings.json, or - for stdin")
     imported.add_argument("--id", default="vscode")
@@ -120,6 +157,8 @@ def main(argv=None):
         "apply": command_apply,
         "import-vscode": command_import_vscode,
         "music": command_music,
+        "ha-token": command_ha_token,
+        "ha-test": command_ha_test,
     }
     try:
         code = handlers[args.command](backend, args)

@@ -14,6 +14,9 @@ from air96_protocol import hex_to_rgb
 
 ENTITY = re.compile(r"light\.[A-Za-z0-9_]+")
 URL = re.compile(r"https?://[^/\s]+(?:/[^\s]*)?$")
+MIN_TOKEN_LENGTH = 8
+# Bracketed-paste markers a terminal inserts around a paste. `read -rsp` keeps them.
+_PASTE_MARKERS = ("\x1b[200~", "\x1b[201~")
 
 
 class HomeAssistantError(RuntimeError):
@@ -50,9 +53,43 @@ def turn_on_payload(entities, color, brightness):
     }
 
 
-def service_request(url, token, payload):
-    if not isinstance(token, str) or len(token) < 8 or any(ch.isspace() for ch in token):
+def sanitize_token(raw):
+    """Drop bracketed-paste markers and surrounding whitespace. Never logs the value."""
+    if not isinstance(raw, str):
+        return ""
+    text = raw
+    for marker in _PASTE_MARKERS:
+        text = text.replace(marker, "")
+    return text.strip()
+
+
+def check_token(token):
+    """Accept a sanitized token. The message names the problem and not the value."""
+    if not isinstance(token, str) or token == "":
         raise HomeAssistantError("Home Assistant token is missing")
+    problems = []
+    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in token):
+        problems.append("it contains whitespace or control characters")
+    if len(token) < MIN_TOKEN_LENGTH:
+        problems.append("it is too short")
+    if problems:
+        raise HomeAssistantError("Home Assistant token is malformed: " + " and ".join(problems))
+    return token
+
+
+def prepare_token(raw):
+    if not isinstance(raw, str) or raw.strip() == "":
+        raise HomeAssistantError("Home Assistant token is missing")
+    cleaned = sanitize_token(raw)
+    if cleaned == "":
+        raise HomeAssistantError(
+            "Home Assistant token is malformed: it contains whitespace or control characters"
+        )
+    return check_token(cleaned)
+
+
+def service_request(url, token, payload):
+    token = prepare_token(token)
     if not isinstance(payload, dict) or "entity_id" not in payload or "rgb_color" not in payload:
         raise HomeAssistantError("Incomplete light payload")
     return {
@@ -68,16 +105,21 @@ def service_request(url, token, payload):
 
 def resolve_token(environ, token_env, token_file, inline=""):
     if inline:
-        return inline
+        return prepare_token(inline)
     name = token_env or "HA_TOKEN"
     if environ.get(name):
-        return environ[name]
+        return prepare_token(environ[name])
     if token_file:
         try:
-            return Path(token_file).read_text().strip()
+            raw = Path(token_file).read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise HomeAssistantError("Home Assistant token is malformed: it is not text") from exc
         except OSError as exc:
-            raise HomeAssistantError(f"Cannot read token file: {exc.strerror or exc}") from exc
-    return ""
+            raise HomeAssistantError(
+                f"Home Assistant token file is unreadable: {exc.strerror or 'unknown error'}"
+            ) from exc
+        return prepare_token(raw)
+    raise HomeAssistantError("Home Assistant token is missing")
 
 
 def send(prepared, opener=None, timeout=5):
