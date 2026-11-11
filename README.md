@@ -1,6 +1,8 @@
 # NuPhy Air96 for Omarchy
 
-Omarchy bar plugin for the NuPhy Air96 V2 (the 2.1.x firmware generation). It sets the RGB backlight, can follow the active Omarchy theme, remaps keys on a picture of the 96% layout, and can push that color to Home Assistant lights. A second view highlights Hyprland and per-app keys. Stock firmware cannot paint individual keys. The [Omarchy keymap](firmware/README.md) adds that, and a music mode can drive it from the system audio monitor.
+Omarchy bar plugin for the NuPhy Air96 V2 (the 2.1.x firmware generation). The whole keyboard is one solid color. It can follow the active Omarchy theme, or a color and brightness you pick. The same choices exist for a Home Assistant lamp. While the Omarchy screensaver is running the keyboard can play the Breathing effect in that color, then return to solid. The Keys tab is a picture of the Air96, the same idea as the Air75 map in [fldc/omarchy-nuphy](https://github.com/fldc/omarchy-nuphy).
+
+Music reaction and Super key highlighting are gone. Old `music`, `per_key`, `modifiers`, and `profiles` sections in `config.json` are ignored. The color is a VIA matrix command. On the already-flashed Omarchy keymap the plugin sends clear first so a leftover per-key overlay cannot hide it. No reflash is required.
 
 The Air96 is a QMK/VIA keyboard. It is not the protocol used by [fldc/omarchy-nuphy](https://github.com/fldc/omarchy-nuphy) for the Air75 V3. This plugin keeps that project's shape: a Quickshell service, one Python worker, theme watching, and an explicit Apply for keymap changes. The worker, watcher, and panel structure are adapted from that project. Copyright 2026 Fredrik Storm, MIT. See [LICENSE](LICENSE).
 
@@ -23,7 +25,7 @@ python3 air96_cli.py apply --follow on
 
 The next theme change runs `air96_cli.py sync` from this checkout. `sync` does nothing until follow is on. The hook does not need the bar plugin.
 
-Bar plugin as well. `./install.sh` with no arguments links this checkout to `~/.config/omarchy/plugins/local.nuphy-air96`, restarts the bar worker, and turns per-key push on:
+Bar plugin as well. `./install.sh` with no arguments links this checkout to `~/.config/omarchy/plugins/local.nuphy-air96` and restarts the bar worker:
 
 ```sh
 ./install.sh
@@ -94,20 +96,20 @@ python3 air96_cli.py --debug status
 
 `~/.config/omarchy-nuphy-air96/config.json` is created on first save, mode `0600`. [config.example.json](config.example.json) matches the defaults.
 
-Theme follow is off until you turn it on, so installing the plugin does not change the keyboard. Brightness, speed, and effect are integers 0–255. Effect `1` is solid color.
+A new config follows the theme. A file you already saved keeps its `follow_theme` value until you change it in the panel or with `apply --follow on`. Brightness is an integer 0–255. The keyboard effect is always solid (`1`) except while the screensaver light show is on, which uses Breathing (`4`) and does not write that effect to EEPROM.
 
 State, including keymap backups, lives in `~/.local/state/omarchy-nuphy-air96/`.
 
 ## Backlight and theme
 
-The Lighting tab sends VIA channel 3: effect, brightness, speed, and hue/saturation. Apply writes them and then saves to EEPROM.
+The Lighting tab sets follow, a color, and brightness for the keyboard, and the same three for the lamp. Toggles apply immediately. Color and brightness use Apply keyboard or Save lights. The keyboard write is VIA channel 3: solid effect, brightness, speed, and hue/saturation, then an EEPROM save. If the per-key probe succeeds, clear (`0xA8`) is sent first.
 
 Follow reads the active theme at `$XDG_STATE_HOME/omarchy/current/theme` (usually `~/.local/state/omarchy/current/theme`):
 
 1. `keyboard.rgb`, first line that is a color. `#RRGGBB`, bare `RRGGBB`, and a `0x` prefix are all accepted. Tokyo Night ships bare `ff00ff`, so a hash-only reader would miss it.
 2. Otherwise `accent` in `colors.toml`.
 
-While follow is on, the default is to switch to solid color so the theme hue is visible. Turn off "Use solid color while following" to keep the current effect and only update hue and saturation. Brightness and speed stay as they are. The same color is not written twice.
+While follow is on, the board is solid in the theme color. Brightness still applies. With follow off, the chosen hex is used. The same color is not written twice.
 
 The bar worker watches the theme directory with inotify. The theme-set hook installed by `./install.sh` is the path that works when the bar is not running. It calls `air96_cli.py sync`, which does nothing when follow is off. You can also run `python3 air96_cli.py sync --force`. When a theme change is started from the menu, Omarchy writes hook errors to `~/.local/state/omarchy/theme-set.log`.
 
@@ -121,9 +123,9 @@ Apply writes only the staged keys. It re-reads first, and if a cell changed sinc
 
 ## Home Assistant
 
-Optional. When enabled, a successful keyboard color write also POSTs `light/turn_on` with `rgb_color` only. The lamp keeps its current brightness. You can push once from the panel without changing the keyboard.
+Optional, and independent of the keyboard switch. The default entity is `light.floor_lamp_66fa` at `http://homeassistant.local:8123`. A saved config keeps the entities already in the file.
 
-`home_assistant.sync_brightness` defaults to false. Turn it on, or use the panel switch "Also set brightness", to send the keyboard brightness as well. That value is 0–255, so 180 is about 71% and is what made the lamp jump.
+While the lamp follows the theme, `light/turn_on` sends `rgb_color` only, so the lamp keeps its own brightness. Turn on "Also set lamp brightness while following the theme" (`sync_brightness`) to send `home_assistant.brightness` as well. With follow off, the chosen lamp color and lamp brightness are always sent. Lamp brightness is separate from the keyboard brightness. 180 is about 71%.
 
 `light.turn_on` turns a light on. `home_assistant.only_when_on` defaults to true: the plugin GETs `/api/states/<entity>` and does not call a light whose state is not `on`. A theme change then leaves an off lamp off. Turn the option off, or turn off "Only when the light is already on", if the lamp should come on with the theme. If every configured light is off, nothing is posted. `ha-test` follows the same rules and says so instead of printing an HTTP status.
 
@@ -148,87 +150,16 @@ The three failures are separate, and none of them includes the token text:
 
 `HA_TOKEN` in the environment overrides the file. `ha-token` says so when that variable is set, without printing its value.
 
-## Keybind highlights
+## Screensaver
 
-The Binds tab reads `hyprctl binds -j` and, when the shell is running, Hyprland's `socket2` for the focused window, submap, and config reloads.
-
-With no modifier held, keys whose bind is exactly Super in the current submap are dim. Super+Shift, Super+Alt, and the other combinations stay dark until those modifiers are held. Mouse binds, catch-alls, and binds from another submap are skipped. When modifiers are held, only keys that complete that exact mask are bright, and they are much brighter than the rest of the board. Super+Shift is mask 65. Super+Shift+Alt is 73. The highlight is the non-modifier key, so a Windows-mode Option keycap that sends Super is not itself the lit key.
-
-The flashed keymap reports that mask (command `0xA9`) from the keys you are holding on the Air96. Super+Shift, Super+Ctrl, Super+Alt, and Super+Shift+Alt each light their own set. Hyprland's socket does not report modifiers, and the keyboard no longer paints every basic key while Super is down. That old mask is why most of the board used to light up, and why adding Shift changed nothing. Reflash the image from this change to get both.
-
-The flashed keymap reports the modifier mask itself. Super, Super+Shift, Super+Ctrl, Super+Alt, and Super+Shift+Alt each light their own binds. That does not need the evdev udev rule. `python3 air96_cli.py status` says so, and it says if push is off or music is using the keys instead.
-
-Push has to be on. The first plugin saved `per_key.push_to_keyboard` as false, and a later default of true does not rewrite that file. `./install.sh` turns it on. So does:
+The Lighting tab switch, or:
 
 ```sh
-python3 air96_cli.py push on
+python3 air96_cli.py screensaver on
+python3 air96_cli.py screensaver off
 ```
 
-An optional evdev listener is still off by default. It reads the 64-bit `input_event` (24 bytes), keeps Shift, Ctrl, Alt, and Super, and drops every other key without logging it. It does not grab the device. It is only a fallback when the keyboard does not answer the modifier report.
-
-Install the second udev rule only if you want that:
-
-```sh
-sudo cp udev/70-nuphy-air96-modifiers.rules /etc/udev/rules.d/
-sudo udevadm control --reload
-```
-
-Replug, enable listening, restart the shell. The `input` group also works and exposes every keyboard, so the seat ACL on this device is the narrower choice. The kernel still delivers every key on that node; only this process ignores them.
-
-## App profiles
-
-When the focused window class changes, a profile can highlight extra keys while no modifier is held. A Hyprland bind on the same key wins. Holding Super, or Super plus other modifiers, shows only that combination.
-
-Profiles are JSON:
-
-```json
-{
-  "id": "firefox",
-  "name": "Firefox",
-  "match": {"class": ["firefox"], "title_contains": []},
-  "keys": [{"key": "t", "mods": ["ctrl"], "label": "New tab", "color": "#89b4fa"}]
-}
-```
-
-Class match is exact, ignoring case. `title_contains` is an extra substring check. Shipped examples are Firefox, Code/Cursor, and Minecraft, in `profiles/`. A file with the same `id` in `~/.config/omarchy-nuphy-air96/profiles/` replaces the shipped one. `"enabled": false` disables that id.
-
-VS Code can be imported from `keybindings.json`. The first chord is kept. Commands that start with `-` are skipped.
-
-```sh
-python3 air96_cli.py import-vscode ~/.config/Code/User/keybindings.json > ~/.config/omarchy-nuphy-air96/profiles/vscode.json
-```
-
-Games do not share an export format. Steam, Lutris, and Minecraft `options.txt` would each need their own parser. The Minecraft example is hand-written, not imported.
-
-## Per-key RGB
-
-Not possible on stock firmware. The Binds tab still draws the highlights on screen. `push_to_keyboard` defaults to on: after a successful `0xA6` probe the worker sends `0xA7` frames and resends them about once a second. Stock firmware answers the probe with `0xFF` and the matrix effect is left alone. The command set, the 2 second timeout, and the USB-unplug clear are in [docs/PER-KEY.md](docs/PER-KEY.md). Flash steps are in [firmware/README.md](firmware/README.md).
-
-## Music
-
-The Binds tab has a Music lighting switch. The same switch from a shell:
-
-```sh
-python3 air96_cli.py music on
-python3 air96_cli.py music off
-python3 air96_cli.py music on --effect vu
-```
-
-`spectrum` paints columns across the keyboard. `vu` uses one level for every key. Colors are tinted by the theme accent, or by the configured hex color when theme follow is off. The bar plugin has to be running; the command only saves the setting.
-
-Audio is the monitor of the default speakers, not the microphone. `parecord --device=@DEFAULT_MONITOR@` is used when it exists, because that name follows the sink you are actually hearing. `pw-record` is only the fallback, and only after `pactl get-default-sink` names the `.monitor` node. `pw-record` does not understand `@DEFAULT_AUDIO_SINK@.monitor`; with no real target it records the microphone, which stays a steady hiss while music plays through headphones.
-
-No extra Python packages. On the Omarchy keymap the frames use the per-key protocol. Bands are log-spaced from 40 Hz. Each band keeps its peak bin (a mean would dim the wider treble bands) and is scaled to its own recent peak, with a noise floor so silence and leakage stay dark. Columns follow key position across the whole board, including the numpad. Brightness follows the level, so a beat gets brighter. Only LEDs that actually changed are written. An unchanged live frame sends a probe, which refreshes the 2 second overlay timer. If the recorder stops sending samples, the last window is dropped and the lights fade instead of sitting on that frame. The clear command (`0xA8`) is not sent between frames, and turning music off does not clear either: it paints the Super highlights straight back onto the overlay. On stock firmware the worker pulses global brightness and hue through VIA about four times a second and does not write those pulses to EEPROM. Stopping music restores the saved effect without another EEPROM write.
-
-`music on` only saves the setting. The bar worker plays it. To watch the levels in this terminal:
-
-```sh
-python3 air96_cli.py music run --debug
-```
-
-That prints rms, bass, one level per band, and how many key LEDs the frame wrote (`leds`, and `last` for the highest index). A full board is `leds=100 last=99`. `leds=0` is an unchanged frame. Ctrl-C restores highlights. Silence should go dark, and a high band should light the right side. If the numbers stay at zero, the monitor is not the device you are hearing.
-
-The visualizer idea, the decay, and the 9-LED batch layout come from [ravila4/nuphy-rgb-music](https://github.com/ravila4/nuphy-rgb-music) by Ricardo Avila, MIT. That project targets the Air75 V2 at about 30 frames a second. This board's HID path sends the LEDs that moved instead of a full frame every tick. The capture and FFT here are separate, and the command bytes stay the Air96 probe.
+The bar worker looks about once a second for a process whose command line contains `org.omarchy.screensaver`, `omarchy-screensaver`, or `omarchy-launch-screensaver`. It ignores its own `air96_` process. While that process is up and the switch is on, the keyboard uses Breathing in the current color. The effect is not written to EEPROM. When the screensaver exits, solid color is restored, also without a new EEPROM write. A crash or reboot therefore returns to the last saved solid color.
 
 ## Tests
 
@@ -247,10 +178,10 @@ Use the USB cable.
 3. `./install.sh --no-plugin`, then `apply --follow on`, then switch themes, including Tokyo Night (`keyboard.rgb` is `ff00ff` with no hash). The keyboard should change without running the command again. Without that hook, follow only applies when you run it yourself.
 4. Read the keymap, change one Windows-layer key, Apply, and confirm it. Change that key in VIA or on another host, then Apply the old draft: the plugin should refuse and leave the new value in place.
 5. Point Home Assistant at one `light.*` entity and confirm an already-on light follows a successful color write without changing brightness. An off light stays off. Confirm `status` does not print the token.
-6. `./install.sh`, then `python3 air96_cli.py status`. The diagnosis should say the worker is this checkout and push is on. Hold Super, then Super+Shift, then Super+Shift+Alt. Each combination should light a different, smaller set. Turn music off first if it is using the keys. The modifier udev rule is not required.
-7. Focus Firefox, then a terminal. Firefox keys should appear only on Firefox. On stock firmware the per-key probe should fail and the physical backlight should stay on the VIA effect.
-8. After flashing the Omarchy keymap, `status` should show `perKey.supported` true. Turn on push if it is off. Super binds should appear on the keys, and killing the bar plugin should return the normal effect within about two seconds. Fn readable lights should still show while Fn is held.
-9. `python3 air96_cli.py music run --debug` with nothing playing should go dark. Start music and rms should move, and the keys with it. `music off` restores the previous effect. On a stock board, the same switch should only pulse the global color.
+6. `./install.sh`, then `python3 air96_cli.py apply --follow on`. The whole board should match the theme, including after a theme switch and after the worker restarts. Brightness in the panel should change the board whether or not follow is on. With follow off, the chosen color should stick.
+7. Turn the lamp follow on in the panel and confirm `light.floor_lamp_66fa` takes the theme color without a brightness jump. Turn follow off, pick a color and a brightness, and confirm both. An off lamp stays off while "Only when the light is already on" is enabled.
+8. `python3 air96_cli.py screensaver on`, then start the screensaver (`omarchy-launch-screensaver`, or wait for hypridle). The board should breathe in the current color. Leave the screensaver and the board should return to solid. No reflash is part of this check.
+9. Open the Keys tab. The picture is the Air96 layout. Click a key, search a keycode, Apply, and confirm the key. The plugin never resets EEPROM.
 
 The QML panel was not launched here. If the bar icon fails to load, the Python CLI still applies lighting and syncs the theme.
 
@@ -260,9 +191,8 @@ The QML panel was not launched here. If the bar icon fails to load, the Python C
 | --- | --- |
 | `manifest.json`, `Service.qml`, `Widget.qml`, `Editor.qml` | Omarchy service and bar panel |
 | `air96_worker.py` | Long-running NDJSON process |
-| `air96_cli.py` | `status`, `devices`, `sync`, `apply`, `import-vscode` |
+| `air96_cli.py` | `status`, `devices`, `sync`, `apply`, `screensaver`, `ha-token`, `ha-test` |
 | `air96_protocol.py`, `air96_hid.py`, `air96_layout.py` | VIA packets, hidraw discovery, 100-key map |
-| `profiles/` | Example window profiles |
-| `install.sh` | Theme-set hook, optional plugin link, and uninstall |
+| `install.sh` | Theme-set hook, plugin link, worker restart, and uninstall |
 | `udev/` | Seat ACL rules, not installed automatically |
 | `hooks/theme-set.d/50-air96-sync` | Theme hook. `./install.sh` links it into `~/.config/omarchy/hooks/theme-set.d/` |

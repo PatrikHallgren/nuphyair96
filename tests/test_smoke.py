@@ -93,9 +93,7 @@ class SmokeTests(unittest.TestCase):
             client.sendall(b"activewindow>>firefox,Hello, world\nsubmap>>resize\nconfigreloaded>>\nignored\n")
             client.close()
             backend = self.backend()
-            with patch("air96_worker.refresh_binds", return_value=True) as refresh:
-                self.assertTrue(events.drain(backend))
-            refresh.assert_called_once()
+            self.assertTrue(events.drain(backend))
             self.assertEqual(backend.window_class, "firefox")
             self.assertEqual(backend.window_title, "Hello, world")
             self.assertEqual(backend.submap, "resize")

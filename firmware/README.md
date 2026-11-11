@@ -15,9 +15,9 @@ Raw HID, 32-byte reports, no report id, same usage page as VIA (`FF60` / `61`). 
 | Clear `0xA8` | `A96K` | Drops the overlay and returns to the normal matrix effect. Nothing is written to EEPROM |
 | Mods `0xA9` | `A96K` | Byte 5 is the Hyprland modmask: shift 1, ctrl 4, alt 8, super 64. Byte 6 is the raw QMK modifier byte |
 
-A probe with version byte `0` also clears. A probe while the overlay is already up refreshes the 2 second timer without changing the picture. If the host stops sending for 2 seconds, or the link leaves USB (unplug, suspend, Bluetooth, or the dongle), the overlay drops. The plugin resends the current highlight about once a second so a still image stays up. Music sends a probe when the picture has not moved, so a quiet passage does not drop the overlay. Clear is only used when music or the overlay is turned off.
+The plugin that ships with this repo does not use the overlay. It sends clear (`0xA8`) when the probe succeeds, then sets the VIA solid color, brightness, and, while the Omarchy screensaver is running, the Breathing effect. That works on the keymap already flashed from the earlier per-key image. Do not reflash for theme follow, the lamp, or the screensaver.
 
-The keymap does not light keys on its own when Super is held. An earlier image painted every basic key (A through the key before Left Ctrl) whenever the GUI modifier was down, and it ignored Shift, Ctrl, and Alt. The host now reads `0xA9` and lights only the Hyprland binds for the modifiers that are actually down. Fn readable lights from ablasik's firmware are unchanged.
+A probe with version byte `0` also clears. A probe while the overlay is already up refreshes the 2 second timer without changing the picture. If the host stops sending for 2 seconds, or the link leaves USB (unplug, suspend, Bluetooth, or the dongle), the overlay drops. Fn readable lights from ablasik's firmware are unchanged.
 
 USB only. Bluetooth and the 2.4G dongle do not expose this raw HID interface.
 

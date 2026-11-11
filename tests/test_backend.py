@@ -1,13 +1,11 @@
 import json
-import math
 import unittest
 from unittest.mock import patch
 
 from support import BackendCase
-from air96_audio import analyze
 from air96_backend import validate_config
-from air96_layout import KEYS
-from air96_worker import execute
+from air96_screensaver import command_is_screensaver, screensaver_running
+from air96_worker import drive_lights, execute
 
 
 class BackendTests(BackendCase):
@@ -32,6 +30,7 @@ class BackendTests(BackendCase):
 
     def test_follow_off_does_not_touch_the_keyboard_on_sync(self):
         self.connect()
+        self.backend.update_settings({"lighting": {"follow_theme": False}})
         self.backend.sync()
         self.assertEqual(self.keyboard.saved, 0)
         self.assertIn("off", self.backend.message)
@@ -116,163 +115,103 @@ class BackendTests(BackendCase):
         self.connect(per_key=False)
         self.assertIs(self.backend.per_key, False)
         self.assertIn("Stock VIA", self.backend.per_key_reason)
-        with self.assertRaises(Exception):
-            self.backend.push_per_key()
+        self.assertNotIn(0xA8, self.keyboard.commands)
 
-    def test_custom_firmware_accepts_a_frame(self):
-        (self.theme / "colors.toml").write_text('accent = "#7aa2f7"\n')
+    def test_custom_firmware_is_cleared_then_painted_solid(self):
+        (self.theme / "keyboard.rgb").write_text("00ff00\n")
         self.connect(per_key=True)
         self.assertIs(self.backend.per_key, True)
-        self.backend.binds = [{
-            "key": "q", "modmask": 64, "submap": "", "label": "Close", "dispatcher": "killactive", "arg": "",
-        }]
-        self.backend.update_settings({"per_key": {"push_to_keyboard": True}})
-        self.backend.push_per_key()
-        self.assertGreaterEqual(len(self.keyboard.frames), 12)
-        self.assertTrue(all(frame[0] == 0xA7 for frame in self.keyboard.frames))
-        self.assertEqual(self.backend.snapshot()["perKey"]["timeoutMs"], 2000)
-        self.backend.clear_per_key()
-        self.assertEqual(self.backend.frame_kind, "")
+        self.assertIn(0xA8, self.keyboard.commands)
+        self.assertNotIn(0xA7, self.keyboard.commands)
+        self.keyboard.commands.clear()
+        self.backend.apply_lighting({"follow_theme": True, "brightness": 90}, force=True)
+        self.assertEqual(self.keyboard.commands[0], 0xA8)
+        self.assertNotIn(0xA7, self.keyboard.commands)
+        self.assertEqual(self.keyboard.effect, 1)
+        self.assertEqual(self.keyboard.brightness, 90)
+        self.assertEqual(self.keyboard.saved, 1)
 
-    def test_super_shift_lights_a_different_key_and_stays_brighter(self):
-        self.connect(per_key=True)
-        self.backend.binds = [
-            {"key": "q", "modmask": 64, "submap": "", "label": "Close", "dispatcher": "killactive", "arg": ""},
-            {"key": "enter", "modmask": 65, "submap": "", "label": "Terminal", "dispatcher": "exec", "arg": ""},
-            {"key": "a", "modmask": 64 | 1 | 8, "submap": "", "label": "Menu", "dispatcher": "exec", "arg": ""},
-        ]
-        self.keyboard.hypr_mods = 64
-        self.backend.push_per_key()
-        self.assertEqual(self.backend.held, 64)
-        q = next(key for key in KEYS if key["id"] == "q")
-        enter = next(key for key in KEYS if key["id"] == "enter")
-        other = next(key for key in KEYS if key["id"] == "z")
-        self.assertGreater(self.keyboard.colors[q["led"]][2], self.keyboard.colors[other["led"]][2] + 80)
-        self.assertLess(self.keyboard.colors[enter["led"]][2], self.keyboard.colors[other["led"]][2] + 20)
+    def test_screensaver_breathing_is_not_saved_and_solid_returns(self):
+        (self.theme / "keyboard.rgb").write_text("ff00ff\n")
+        self.connect()
+        self.backend.update_settings({"screensaver": {"enabled": True}})
+        self.backend.apply_lighting(force=True)
+        saved = self.keyboard.saved
+        self.assertEqual(self.keyboard.effect, 1)
+        self.backend.note_screensaver(True)
+        self.assertEqual(self.keyboard.effect, 4)
+        self.assertEqual(self.keyboard.saved, saved)
+        self.assertFalse(self.backend.note_screensaver(True))
+        self.backend.note_screensaver(False)
+        self.assertEqual(self.keyboard.effect, 1)
+        self.assertEqual(self.keyboard.saved, saved)
 
-        self.keyboard.hypr_mods = 64 | 1
-        self.backend.push_per_key()
-        self.assertEqual(self.backend.held, 65)
-        self.assertGreater(self.keyboard.colors[enter["led"]][2], self.keyboard.colors[q["led"]][2] + 80)
+    def test_drive_lights_waits_a_second_between_screensaver_checks(self):
+        (self.theme / "keyboard.rgb").write_text("ff00ff\n")
+        self.connect()
+        self.backend.update_settings({"screensaver": {"enabled": True}})
+        self.backend.apply_lighting(force=True)
+        saved = self.keyboard.saved
+        state = {"screen": 0.0}
+        with patch("air96_worker.screensaver_running", return_value=True):
+            drive_lights(self.backend, state, 10)
+        self.assertEqual(self.keyboard.effect, 4)
+        self.assertEqual(self.keyboard.saved, saved)
+        with patch("air96_worker.screensaver_running", return_value=False):
+            drive_lights(self.backend, state, 10.2)
+            self.assertEqual(self.keyboard.effect, 4)
+            drive_lights(self.backend, state, 12)
+        self.assertEqual(self.keyboard.effect, 1)
+        self.assertEqual(self.keyboard.saved, saved)
 
-        self.keyboard.hypr_mods = 64 | 1 | 8
-        self.backend.push_per_key()
-        a = next(key for key in KEYS if key["id"] == "a")
-        self.assertEqual(self.backend.held, 64 | 1 | 8)
-        self.assertGreater(self.keyboard.colors[a["led"]][2], self.keyboard.colors[q["led"]][2] + 80)
-        self.assertGreater(self.keyboard.colors[a["led"]][2], self.keyboard.colors[enter["led"]][2] + 80)
+    def test_screensaver_process_scan_ignores_the_worker(self):
+        self.assertTrue(command_is_screensaver("kitty --class org.omarchy.screensaver omarchy-screensaver"))
+        self.assertTrue(command_is_screensaver("omarchy-launch-screensaver"))
+        self.assertFalse(command_is_screensaver("python3 /home/me/.config/omarchy/plugins/local.nuphy-air96/air96_worker.py"))
+        root = self.backend.state_dir / "proc"
+        (root / "42").mkdir(parents=True)
+        (root / "42" / "cmdline").write_bytes(b"omarchy-launch-screensaver\x00")
+        (root / "7").mkdir()
+        (root / "7" / "cmdline").write_bytes(b"python3\x00air96_worker.py\x00")
+        self.assertTrue(screensaver_running(root))
 
-    def test_music_deltas_do_not_clear_the_overlay(self):
-        self.connect(per_key=True)
-        loud = {"rms": 0.8, "bands": [1.0] + [0.0] * 15, "bass": 1.0, "highs": 0.0}
-        self.backend.push_music(loud)
-        first = len(self.keyboard.frames)
-        self.assertGreaterEqual(first, 2)
-        self.assertNotIn(0xA8, self.keyboard.commands)
-        self.keyboard.frames.clear()
-        self.backend.push_music(loud)
-        self.assertEqual(self.keyboard.frames, [])
-        self.assertEqual(self.keyboard.commands[-1], 0xA6)
-        self.backend.push_music({"rms": 0.0, "bands": [0.0] * 16, "bass": 0.0, "highs": 0.0})
-        self.assertNotIn(0xA8, self.keyboard.commands)
-        self.assertGreater(len(self.keyboard.frames), 0)
-
-    def test_music_frame_covers_every_key_not_only_the_left_third(self):
-        self.connect(per_key=True)
-        dark = {"rms": 0.0, "bands": [0.0] * 16, "bass": 0.0, "highs": 0.0, "loudness": 0.0}
-        self.backend.push_music(dark)
-        self.assertEqual(self.backend.last_led_count, 100)
-        self.assertEqual(self.backend.last_led_index, 99)
-        self.keyboard.frames.clear()
-        hot = [0.0] * 16
-        hot[-1] = 1.0
-        self.backend.push_music({"rms": 1.0, "bands": hot, "bass": 1.0, "highs": 1.0, "loudness": 1.0})
-        right = next(key for key in KEYS if key["id"] == "kp_enter")
-        left = min(KEYS, key=lambda key: key["x"])
-        self.assertGreater(self.keyboard.colors[right["led"]][0], 200)
-        self.assertLess(self.keyboard.colors[left["led"]][0], 30)
-        self.assertGreaterEqual(self.backend.last_led_index, right["led"])
-        self.assertGreater(self.backend.last_led_count, 0)
-        self.assertLess(self.backend.last_led_count, 100)
-        self.assertTrue(any(
-            frame[1] <= right["led"] < frame[1] + frame[2] for frame in self.keyboard.frames
-        ))
-
-    def test_music_off_restores_highlights_without_clearing_or_saving(self):
-        from air96_audio import MusicSession
-        from air96_worker import drive_lights
-
-        self.connect(per_key=True)
-        self.backend.binds = [{
-            "key": "q", "modmask": 64, "submap": "", "label": "Close", "dispatcher": "killactive", "arg": "",
-        }]
-        self.backend.update_settings({
+    def test_legacy_sections_are_ignored(self):
+        loaded = validate_config({
             "music": {"enabled": True},
             "per_key": {"push_to_keyboard": True},
+            "modifiers": {"enabled": True},
+            "profiles": {"enabled": True},
+            "lighting": {"follow_theme": False, "hex": "#010203"},
         })
-        self.backend.push_music({"rms": 0.8, "bands": [1.0] + [0.0] * 15, "bass": 1.0, "highs": 0.0})
-        self.assertEqual(self.backend.frame_kind, "music")
-        saved = self.keyboard.saved
-        self.keyboard.commands.clear()
-        self.keyboard.frames.clear()
-        self.backend.update_settings({"music": {"enabled": False}})
-        state = {"music": True, "push": True, "last_music": 0.0, "retry": 0.0}
-        drive_lights(self.backend, MusicSession(), state, 10.0)
-        self.assertFalse(state["music"])
-        self.assertTrue(self.backend.config["per_key"]["push_to_keyboard"])
-        self.assertNotIn(0xA8, self.keyboard.commands)
-        self.assertEqual(self.keyboard.saved, saved)
-        self.assertEqual(self.backend.frame_kind, "highlight")
-        q = next(key for key in KEYS if key["id"] == "q")
-        other = next(key for key in KEYS if key["id"] == "z")
-        self.assertGreater(self.keyboard.colors[q["led"]][0], self.keyboard.colors[other["led"]][0] + 80)
+        self.assertNotIn("music", loaded)
+        self.assertNotIn("per_key", loaded)
+        self.assertFalse(loaded["lighting"]["follow_theme"])
+        self.assertEqual(loaded["lighting"]["hex"], "#010203")
+        self.assertEqual(loaded["home_assistant"]["entities"], ["light.floor_lamp_66fa"])
 
-        self.keyboard.hypr_mods = 64
-        drive_lights(self.backend, MusicSession(), state, 11.0)
-        self.assertEqual(self.backend.held, 64)
-        self.assertEqual(self.backend.frame_kind, "highlight")
-        self.assertGreater(self.keyboard.colors[q["led"]][0], 200)
-        self.assertNotIn(0xA8, self.keyboard.commands)
+    def test_manual_lamp_color_sends_its_own_brightness(self):
+        self.backend.update_settings({"home_assistant": {
+            "enabled": True,
+            "url": "http://ha.local:8123",
+            "entities": ["light.floor_lamp_66fa"],
+            "token": "super-secret-token",
+            "follow_theme": False,
+            "hex": "#abcdef",
+            "brightness": 40,
+            "only_when_on": False,
+        }})
+        calls = []
 
-    def test_music_off_retries_when_the_highlight_push_fails(self):
-        from air96_audio import MusicSession
-        from air96_worker import drive_lights
+        def post_only(prepared, opener=None, timeout=5):
+            calls.append(prepared)
+            return {"status": 200, "body": "[]"}
 
-        self.connect(per_key=True)
-        self.backend.binds = [{
-            "key": "q", "modmask": 64, "submap": "", "label": "Close", "dispatcher": "killactive", "arg": "",
-        }]
-        self.backend.update_settings({"music": {"enabled": False}, "per_key": {"push_to_keyboard": True}})
-        self.backend.frame_kind = "music"
-        state = {"music": True, "push": True, "last_music": 0.0, "retry": 0.0}
-        original = self.keyboard.transact
-        failed = {"count": 0}
-
-        def flaky(payload):
-            if payload and payload[0] == 0xA7 and failed["count"] < 1:
-                failed["count"] += 1
-                raise TimeoutError("keyboard busy")
-            return original(payload)
-
-        self.keyboard.transact = flaky
-        drive_lights(self.backend, MusicSession(), state, 20.0)
-        self.assertTrue(state["music"])
-        self.assertNotEqual(self.backend.frame_kind, "highlight")
-        drive_lights(self.backend, MusicSession(), state, 21.0)
-        self.assertFalse(state["music"])
-        self.assertEqual(self.backend.frame_kind, "highlight")
-        self.assertNotIn(0xA8, self.keyboard.commands)
-        self.assertTrue(self.backend.config["per_key"]["push_to_keyboard"])
-
-    def test_stock_music_pulse_is_not_saved(self):
-        self.connect(per_key=False)
-        samples = [0.6 * math.sin(2 * math.pi * 80 * i / 16000) for i in range(512)]
-        saved = self.keyboard.saved
-        self.backend.push_music(analyze(samples))
-        self.assertEqual(self.keyboard.saved, saved)
-        self.assertEqual(self.keyboard.effect, 1)
-        self.assertGreater(self.keyboard.brightness, 8)
-        self.assertIn("not saved", self.backend.message)
+        with patch("air96_backend.send_ha", post_only):
+            self.backend.push_home_assistant()
+        body = json.loads(calls[0]["body"])
+        self.assertEqual(body["rgb_color"], [0xAB, 0xCD, 0xEF])
+        self.assertEqual(body["brightness"], 40)
+        self.assertNotIn("super-secret-token", calls[0]["body"].decode())
 
     def test_keymap_roundtrip_and_conflict(self):
         self.connect()
@@ -289,7 +228,7 @@ class BackendTests(BackendCase):
         self.assertIn("nothing was written", self.backend.error)
 
     def test_execute_reports_a_missing_keyboard(self):
-        result = execute(self.backend, {"action": "apply", "config": {"hex": "#112233"}})
+        result = execute(self.backend, {"action": "apply", "config": {"hex": "#112233", "follow_theme": False}})
         self.assertIn("not connected", result["error"].lower())
         self.assertNotIn("super-secret-token", json.dumps(result))
 

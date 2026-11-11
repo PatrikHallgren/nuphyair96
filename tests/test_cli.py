@@ -20,9 +20,6 @@ from air96_protocol import protocol_version_request
 from support import ROOT, FakeKeyboard
 
 
-VSCODE = '[{"key": "ctrl+s", "command": "workbench.action.files.save"}]\n'
-
-
 class RecordingTransport:
     def __init__(self, keyboard):
         self.keyboard = keyboard
@@ -86,7 +83,7 @@ class CliTests(unittest.TestCase):
                 main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         text = stdout.getvalue()
-        for name in ("status", "devices", "sync", "apply", "import-vscode", "music", "push", "ha-token", "ha-test"):
+        for name in ("status", "devices", "sync", "apply", "screensaver", "ha-token", "ha-test"):
             self.assertIn(name, text)
         self.assertIn("--debug", text)
         with redirect_stderr(stderr):
@@ -100,7 +97,7 @@ class CliTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(script.returncode, 0, script.stderr)
-        self.assertIn("import-vscode", script.stdout)
+        self.assertIn("screensaver", script.stdout)
         bare = subprocess.run(
             [sys.executable, str(ROOT / "air96_cli.py")],
             capture_output=True,
@@ -123,8 +120,8 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("token", status["homeAssistant"])
 
         code, out, err = self.run_main(["sync"])
-        self.assertEqual(code, 0, err)
-        self.assertIn("off", out.lower())
+        self.assertEqual(code, 1, err)
+        self.assertIn("not connected", (out + err).lower())
 
         code, out, err = self.run_main(
             ["apply", "--hex", "#112233", "--effect", "1", "--brightness", "20", "--speed", "30", "--follow", "false"],
@@ -144,79 +141,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("not connected", err.lower())
 
-    def test_import_vscode_from_a_file_and_stdin(self):
-        path = self.root / "keybindings.json"
-        path.write_text(VSCODE)
-        code, out, err = self.run_main(["import-vscode", str(path), "--id", "editor", "--name", "Editor"])
+    def test_screensaver_toggle_saves_without_opening_a_keyboard(self):
+        code, out, err = self.run_main(["screensaver", "on"])
         self.assertEqual(code, 0, err)
-        profile = json.loads(out)
-        self.assertEqual(profile["id"], "editor")
-        self.assertEqual(profile["keys"][0]["key"], "s")
-        with patch("sys.stdin", StringIO(VSCODE)):
-            code, out, err = self.run_main(["import-vscode", "-"])
-        self.assertEqual(code, 0, err)
-        self.assertEqual(json.loads(out)["keys"][0]["mods"], ["ctrl"])
-
-    def test_music_toggle_saves_without_opening_a_keyboard(self):
-        code, out, err = self.run_main(["music", "on", "--effect", "vu"])
-        self.assertEqual(code, 0, err)
-        self.assertIn("Music", out)
+        self.assertIn("Screensaver", out)
         saved = json.loads((self.root / "config.json").read_text())
-        self.assertTrue(saved["music"]["enabled"])
-        self.assertEqual(saved["music"]["effect"], "vu")
-        code, out, err = self.run_main(["music", "off"])
+        self.assertTrue(saved["screensaver"]["enabled"])
+        code, out, err = self.run_main(["screensaver", "off"])
         self.assertEqual(code, 0, err)
         saved = json.loads((self.root / "config.json").read_text())
-        self.assertFalse(saved["music"]["enabled"])
-        self.assertEqual(saved["music"]["effect"], "vu")
-
-    def test_push_on_is_saved_and_status_explains_when_it_is_off(self):
-        code, out, err = self.run_main(["push", "off"])
-        self.assertEqual(code, 0, err)
-        code, out, err = self.run_main(["status"])
-        self.assertEqual(code, 0, err)
-        status = json.loads(out)
-        self.assertFalse(status["perKey"]["push"])
-        self.assertTrue(any("push on" in line for line in status["diagnosis"]))
-        self.assertIn("push on", err)
-        code, out, err = self.run_main(["push", "on"])
-        self.assertEqual(code, 0, err)
-        saved = json.loads((self.root / "config.json").read_text())
-        self.assertTrue(saved["per_key"]["push_to_keyboard"])
-        self.assertIn("not required", out)
-
-    def test_music_run_prints_levels_from_the_speaker_monitor(self):
-        from air96_cli import run_music_debug
-
-        class Capture:
-            command = ["parecord", "--device=@DEFAULT_MONITOR@"]
-            bytes_total = 4096
-            stalled = False
-            error = ""
-
-        class Session:
-            def __init__(self):
-                self.capture = Capture()
-                self.error = ""
-                self.calls = 0
-
-            def poll(self):
-                self.calls += 1
-                if self.calls == 1:
-                    return {"rms": 0.42, "bass": 0.7, "loudness": 0.8, "silent": False, "bands": [0.2]}
-                self.capture.stalled = True
-                self.error = "stopped"
-                return {"rms": 0.0, "bass": 0.0, "loudness": 0.0, "silent": True, "bands": [0.0]}
-
-        lines = []
-        count = run_music_debug(self.backend(), Session(), cycles=2, emit=lines.append)
-        self.assertEqual(count, 2)
-        self.assertIn("@DEFAULT_MONITOR@", lines[0])
-        self.assertIn("rms=0.420", lines[2])
-        self.assertIn("bands=[0.20]", lines[2])
-        self.assertIn("leds=0", lines[2])
-        self.assertIn("silent=True", lines[3])
-        self.assertIn("bands=[0.00]", lines[3])
+        self.assertFalse(saved["screensaver"]["enabled"])
 
     def test_ha_token_sanitizes_and_ha_test_reports_status(self):
         secret = "long-lived-token-value"

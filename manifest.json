@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "author": "Patrik Hallgren",
   "license": "MIT",
-  "description": "Backlight, theme sync, keymap, keybind highlights, and Home Assistant lights for the NuPhy Air96 V2 over VIA.",
+  "description": "Theme color, brightness, screensaver, keymap, and Home Assistant lights for the NuPhy Air96 V2 over VIA.",
   "kinds": [
     "service",
     "bar-widget"

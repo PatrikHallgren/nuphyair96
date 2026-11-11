@@ -24,7 +24,7 @@ from air96_ha import (
 )
 from air96_keycodes import catalog, keycode_name, keycode_short
 from air96_layout import KEYS, LAYER_COUNT, LAYERS, LED_COUNT, MATRIX_COLS, MATRIX_ROWS
-from air96_profiles import ProfileError, load_profiles, match_profile
+from air96_screensaver import BREATHING_EFFECT
 from air96_protocol import (
     BUFFER_CHUNK,
     CMD_PER_KEY_CLEAR,
@@ -54,42 +54,38 @@ from air96_protocol import (
     parse_protocol_version,
     per_key_capabilities,
     per_key_clear_request,
-    per_key_delta_packets,
-    per_key_mods_request,
     per_key_probe_request,
-    per_key_set_packets,
-    parse_per_key_mods,
     per_key_supported,
     protocol_version_request,
     set_keycode_request,
 )
 from air96_hid import HidError
 from air96_theme import read_theme_color
-from air96_binds import compose_highlights, held_names
-
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "omarchy-nuphy-air96"
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "omarchy-nuphy-air96"
 
 VERIFICATION = {
     "lighting": "VIA RGB-matrix channel implemented; not run on an Air96",
     "keymap": "VIA dynamic keymap implemented; not run on an Air96",
-    "perKey": "On-screen highlights work on stock firmware. A successful 0xA6 probe means this keyboard can take per-key colors.",
+    "perKey": "A successful probe means the Omarchy keymap is flashed. The worker clears that overlay and uses the VIA solid color.",
     "theme": "keyboard.rgb and colors.toml parsing is tested. Live theme switching was not run here.",
     "homeAssistant": "Light payloads are tested. No Home Assistant server was called.",
-    "modifiers": "The firmware reports the modifier mask. The evdev listener is optional and is not required for Super highlights.",
+    "screensaver": "Breathing is sent while org.omarchy.screensaver is running, and it is not written to EEPROM.",
 }
 
 
 def verification_notes(per_key):
     notes = dict(VERIFICATION)
     if per_key is True:
-        notes["perKey"] = (
-            "This keyboard answered the per-key probe. The bar worker sends colors when push is on. "
-            "The static sentence about the firmware not being flashed was a development note, not a live check."
-        )
+        notes["perKey"] = "This keyboard answered the per-key probe. The overlay is cleared so the VIA color covers the whole board."
     elif per_key is False:
-        notes["perKey"] = "The per-key probe was not accepted. Stock firmware leaves the matrix effect alone."
+        notes["perKey"] = "The per-key probe was not accepted. The VIA solid color is used on its own."
     return notes
+
+
+# Sections written by the music and Super-highlight plugin. They are dropped
+# on load so an old config.json still opens.
+LEGACY_SECTIONS = {"modifiers", "per_key", "profiles", "music"}
 
 
 def default_config():
@@ -99,23 +95,26 @@ def default_config():
             "brightness": 180,
             "speed": 128,
             "hex": "#ffffff",
-            "follow_theme": False,
+            "follow_theme": True,
             "solid_when_following": True,
         },
         "home_assistant": {
             "enabled": False,
-            "url": "",
+            "url": "http://homeassistant.local:8123",
             "token_env": "HA_TOKEN",
             "token_file": "",
             "token": "",
-            "entities": [],
+            "entities": ["light.floor_lamp_66fa"],
+            "hex": "#ffffff",
+            "brightness": 180,
+            "follow_theme": True,
             "sync_brightness": False,
             "only_when_on": True,
         },
-        "modifiers": {"enabled": False},
-        "per_key": {"enabled": True, "push_to_keyboard": True},
-        "profiles": {"enabled": True},
-        "music": {"enabled": False, "effect": "spectrum"},
+        "screensaver": {
+            "enabled": False,
+            "effect": BREATHING_EFFECT,
+        },
     }
 
 
@@ -135,7 +134,7 @@ def validate_config(raw):
     if not isinstance(raw, dict):
         raise ValueError("Config must be an object")
     base = default_config()
-    unknown = set(raw) - set(base)
+    unknown = set(raw) - set(base) - LEGACY_SECTIONS
     if unknown:
         raise ValueError("Unknown config section: " + ", ".join(sorted(unknown)))
     config = default_config()
@@ -178,34 +177,28 @@ def validate_config(raw):
             merged["entities"] = normalize_entities(merged["entities"])
         else:
             merged["entities"] = []
+        color = normalize_hex(merged["hex"])
+        if not color:
+            raise ValueError("Home Assistant color must be #RRGGBB")
+        merged["hex"] = color
+        merged["brightness"] = _byte(merged["brightness"], "home_assistant.brightness")
+        merged["follow_theme"] = _bool(merged["follow_theme"], "home_assistant.follow_theme")
         if merged["enabled"] and (not merged["url"] or not merged["entities"]):
             raise ValueError("Home Assistant needs a URL and at least one light entity")
         config["home_assistant"] = merged
-    for name in ("modifiers", "per_key", "profiles"):
-        if name not in raw:
-            continue
-        section = raw[name]
+    if "screensaver" in raw:
+        section = raw["screensaver"]
         if not isinstance(section, dict):
-            raise ValueError(f"{name} must be an object")
-        extra = set(section) - set(base[name])
+            raise ValueError("screensaver must be an object")
+        extra = set(section) - set(base["screensaver"])
         if extra:
-            raise ValueError(f"Unknown {name} option: " + ", ".join(sorted(extra)))
-        merged = {**base[name], **section}
-        for key, value in merged.items():
-            merged[key] = _bool(value, f"{name}.{key}")
-        config[name] = merged
-    if "music" in raw:
-        section = raw["music"]
-        if not isinstance(section, dict):
-            raise ValueError("music must be an object")
-        extra = set(section) - set(base["music"])
-        if extra:
-            raise ValueError("Unknown music option: " + ", ".join(sorted(extra)))
-        merged = {**base["music"], **section}
-        merged["enabled"] = _bool(merged["enabled"], "music.enabled")
-        if merged["effect"] not in ("spectrum", "vu"):
-            raise ValueError("music.effect must be spectrum or vu")
-        config["music"] = merged
+            raise ValueError("Unknown screensaver option: " + ", ".join(sorted(extra)))
+        merged = {**base["screensaver"], **section}
+        merged["enabled"] = _bool(merged["enabled"], "screensaver.enabled")
+        merged["effect"] = _byte(merged["effect"], "screensaver.effect")
+        if merged["effect"] >= len(EFFECTS):
+            raise ValueError("screensaver.effect is not a known RGB effect")
+        config["screensaver"] = merged
     return config
 
 
@@ -265,21 +258,12 @@ class Backend:
         self.keymap = None
         self.keymap_backup = ""
         self.conflicts = []
-        self.binds = []
-        self.held = 0
-        self.modifier_permission = ""
-        self.window_class = ""
-        self.window_title = ""
-        self.submap = ""
         self.ha_error = ""
         self.ha_pushed = ""
-        self.music_error = ""
         self.per_key_caps = None
         self.frame_kind = ""
-        self._music_frame = None
         self.last_direct = 0.0
-        self.last_led_count = 0
-        self.last_led_index = -1
+        self.screensaver_active = False
         self._config_mtime = 0
         self._load()
 
@@ -361,12 +345,13 @@ class Backend:
         self.per_key_caps = per_key_capabilities(response)
         if self.per_key:
             leds = self.per_key_caps.get("leds") if self.per_key_caps else None
-            self.per_key_reason = "Custom firmware accepted per-key colors (%s LEDs)." % (leds or 100)
+            self.per_key_reason = "Custom firmware answered the probe (%s LEDs). The overlay is cleared." % (leds or 100)
+            try:
+                self.clear_per_key()
+            except (ProtocolError, OSError, TimeoutError) as exc:
+                self.error = str(exc)[:300]
         else:
-            self.per_key_reason = (
-                "Stock VIA firmware has no per-key command (probe returned unhandled). "
-                "The on-screen map still highlights keys. See docs/PER-KEY.md to add the command in QMK."
-            )
+            self.per_key_reason = "Stock VIA firmware has no per-key command. The solid color is the matrix effect."
         try:
             self.hardware = self._read_lighting()
         except (ProtocolError, OSError, TimeoutError) as exc:
@@ -383,25 +368,40 @@ class Backend:
     def theme_color(self):
         return read_theme_color(self.theme_path)
 
-    def _target(self, lighting):
+    def keyboard_color(self):
+        lighting = self.config["lighting"]
         if lighting["follow_theme"]:
             color = self.theme_color()
             if not color:
                 raise ValueError("Theme keyboard.rgb and colors.toml accent are missing or not a hex color")
-            effect = SOLID_EFFECT if lighting["solid_when_following"] else lighting["effect"]
-            return effect, color
-        return lighting["effect"], lighting["hex"]
+            return color
+        return lighting["hex"]
 
-    def apply_lighting(self, patch=None, force=False, push_ha=True, save=True):
+    def active_effect(self):
+        """Solid color, or the screensaver animation while that process is up."""
+        show = self.config["screensaver"]["enabled"] and self.screensaver_active
+        if show:
+            return int(self.config["screensaver"]["effect"])
+        return SOLID_EFFECT
+
+    def apply_lighting(self, patch=None, force=False, push_ha=True, save=None):
         if patch is not None:
             self.config = validate_config({**self.config, "lighting": {**self.config["lighting"], **patch}})
             self._save()
         lighting = self.config["lighting"]
-        effect, color = self._target(lighting)
-        signature = json.dumps([self.device_identity, effect, lighting["brightness"], lighting["speed"], color])
+        color = self.keyboard_color()
+        effect = self.active_effect()
+        showing = effect != SOLID_EFFECT
+        if save is None:
+            save = not showing
+        signature = json.dumps([
+            self.device_identity, effect, lighting["brightness"], lighting["speed"], color, showing,
+        ])
         if not force and signature == self.applied_signature:
             self.message = "Lighting already matches this theme"
             return
+        if self.per_key:
+            self.clear_per_key()
         hue, sat = hex_to_qmk_hs(color)
         self._transact(lighting_set(VAL_EFFECT, effect))
         self._transact(lighting_set(VAL_BRIGHTNESS, lighting["brightness"]))
@@ -416,13 +416,21 @@ class Backend:
         self.error = ""
         if push_ha and self.config["home_assistant"]["enabled"]:
             try:
-                self.push_home_assistant(color)
+                self.push_home_assistant()
             except HomeAssistantError:
-                # The keyboard changed. Drop the signature so the next sync retries the lights.
                 self.applied_signature = ""
                 raise
-        if self.config["per_key"]["push_to_keyboard"] and self.per_key and not self.config["music"]["enabled"]:
-            self.push_per_key()
+
+    def note_screensaver(self, running):
+        """Start or stop the light show. The animation is not stored in EEPROM."""
+        active = bool(running) and self.config["screensaver"]["enabled"]
+        if active == self.screensaver_active and self.applied_signature:
+            return False
+        self.screensaver_active = active
+        self.applied_signature = ""
+        if self.transport is not None:
+            self.apply_lighting(force=True, push_ha=False, save=False)
+        return True
 
     def sync(self, force=False):
         if not self.config["lighting"]["follow_theme"]:
@@ -444,9 +452,25 @@ class Backend:
         self.message = "Settings saved"
         self.config_error = ""
 
+    def lamp_color(self):
+        section = self.config["home_assistant"]
+        if section["follow_theme"]:
+            return self.theme_color() or self.config["lighting"]["hex"]
+        return section["hex"]
+
+    def lamp_brightness(self):
+        """None leaves the lamp's own level. Manual color always sends a level."""
+        section = self.config["home_assistant"]
+        if section["follow_theme"] and not section["sync_brightness"]:
+            return None
+        return int(section["brightness"])
+
     def push_home_assistant(self, color=None, brightness=None):
         section = self.config["home_assistant"]
-        color = color or (self.theme_color() if self.config["lighting"]["follow_theme"] else self.config["lighting"]["hex"])
+        if color is None:
+            color = self.lamp_color()
+        if brightness is None:
+            brightness = self.lamp_brightness()
         token = resolve_token(self.environ, section["token_env"], section["token_file"], section["token"])
         entities = normalize_entities(section["entities"])
         skipped = []
@@ -469,10 +493,7 @@ class Backend:
                 self.ha_error = ""
                 self.message = "Home Assistant lights are off; color not pushed"
                 return {"status": None, "skipped": True, "body": "", "leftOff": skipped}
-        level = None
-        if section["sync_brightness"]:
-            level = self.config["lighting"]["brightness"] if brightness is None else brightness
-        payload = turn_on_payload(entities, color, level)
+        payload = turn_on_payload(entities, color, brightness)
         prepared = service_request(section["url"], token, payload)
         try:
             result = send_ha(prepared)
@@ -580,76 +601,8 @@ class Backend:
         self.message = "Keymap applied"
         self.error = ""
 
-    def active_profile(self):
-        if not self.config["profiles"]["enabled"]:
-            return None
-        try:
-            profiles = load_profiles(self.profiles_dir)
-        except ProfileError as exc:
-            self.error = str(exc)[:400]
-            return None
-        return match_profile(profiles, self.window_class, self.window_title)
-
-    def highlights(self):
-        if not self.config["per_key"]["enabled"]:
-            return {}
-        color = self.theme_color() or self.config["lighting"]["hex"]
-        return compose_highlights(self.binds, self.held, self.submap, self.active_profile(), color)
-
-    def _write_colors(self, colors):
-        for payload in per_key_set_packets(colors):
-            response = self._transact(payload)
-            if response[0] != 0xA7:
-                raise ProtocolError("Per-key write was not acknowledged")
-        self.last_direct = time.monotonic()
-
-    def read_keyboard_mods(self):
-        """Hyprland modmask from this keyboard, or None on stock / older firmware.
-
-        The keyboard already knows which modifiers are down. That is what
-        makes Super+Shift light a different set from Super alone, without a
-        second udev rule on /dev/input.
-        """
-        if not self.per_key or self.transport is None:
-            return None
-        try:
-            response = self.transport.transact(per_key_mods_request())
-        except (OSError, TimeoutError, HidError):
-            return None
-        return parse_per_key_mods(response)
-
-    def push_per_key(self):
-        if not self.per_key:
-            raise ProtocolError(self.per_key_reason)
-        mods = self.read_keyboard_mods()
-        if mods is not None:
-            self.held = mods
-        colors = [(0, 0, 0)] * LED_COUNT
-        base = self.theme_color() or self.config["lighting"]["hex"]
-        red, green, blue = _scale(base, 0.04)
-        for key in KEYS:
-            colors[key["led"]] = (red, green, blue)
-        for ident, item in self.highlights().items():
-            key = next((entry for entry in KEYS if entry["id"] == ident), None)
-            if key is None:
-                continue
-            scale = {"idle": 0.55, "active": 1.0, "profile": 0.7}.get(item["level"], 0.6)
-            colors[key["led"]] = _scale(item["color"], scale)
-        self._write_colors(colors)
-        self.frame_kind = "highlight"
-        self.message = "Per-key frame sent"
-
-    def keepalive_overlay(self):
-        """Refresh the 2 second overlay timer without rewriting LEDs or clearing."""
-        if not self.per_key or self.transport is None:
-            return False
-        response = self._transact(per_key_probe_request())
-        if response[0] != 0xA6:
-            raise ProtocolError("Per-key keepalive was not acknowledged")
-        self.last_direct = time.monotonic()
-        return True
-
     def clear_per_key(self):
+        """Drop a leftover per-key overlay so the VIA matrix effect is visible."""
         if not self.per_key or self.transport is None:
             self.frame_kind = ""
             return
@@ -657,95 +610,14 @@ class Backend:
         if not response or response[0] != CMD_PER_KEY_CLEAR:
             raise ProtocolError("Per-key clear was not acknowledged")
         self.frame_kind = ""
-        self._music_frame = None
         self.last_direct = 0.0
-
-    def push_music(self, levels):
-        from air96_audio import frame_colors, via_pulse
-        tint = self.theme_color() or self.config["lighting"]["hex"]
-        if self.per_key:
-            from air96_protocol import per_key_packet_span
-            colors = frame_colors(levels, self.config["music"]["effect"], tint)
-            packets = per_key_delta_packets(self._music_frame, colors)
-            sent, last = per_key_packet_span(packets)
-            old_timeout = getattr(self.transport, "timeout", None)
-            if old_timeout is not None:
-                self.transport.timeout = min(float(old_timeout), 0.08)
-            try:
-                if packets:
-                    for payload in packets:
-                        response = self._transact(payload)
-                        if response[0] != 0xA7:
-                            raise ProtocolError("Per-key write was not acknowledged")
-                else:
-                    response = self._transact(per_key_probe_request())
-                    if response[0] != 0xA6:
-                        raise ProtocolError("Per-key keepalive was not acknowledged")
-            finally:
-                if old_timeout is not None:
-                    self.transport.timeout = old_timeout
-            self.last_led_count = sent
-            self.last_led_index = last
-            self._music_frame = [tuple(color) for color in colors]
-            self.last_direct = time.monotonic()
-            self.frame_kind = "music"
-            self.music_error = ""
-            self.message = "Music frame sent" if packets else "Music frame held"
-            if packets:
-                self.message += f" leds={sent} last={last}"
-            return
-        if self.transport is None:
-            raise ProtocolError("Air96 is not connected over USB")
-        pulse = via_pulse(levels, tint, self.config["lighting"]["brightness"])
-        self._transact(lighting_set(VAL_EFFECT, pulse["effect"]))
-        self._transact(lighting_set(VAL_BRIGHTNESS, pulse["brightness"]))
-        self._transact(lighting_set(VAL_COLOR, pulse["hue"], pulse["sat"]))
-        self.applied_signature = ""
-        self.frame_kind = "music"
-        self.music_error = ""
-        self.hardware = {
-            "effect": pulse["effect"], "effectName": effect_name(pulse["effect"]),
-            "brightness": pulse["brightness"], "speed": self.config["lighting"]["speed"],
-            "hue": pulse["hue"], "sat": pulse["sat"],
-        }
-        self.last_led_count = 0
-        self.last_led_index = -1
-        self.message = "Music pulse sent (stock firmware, not saved)"
-
-    def release_overlay(self):
-        """Leave music and put the previous lighting back.
-
-        Per-key music never changes the VIA effect. Clearing the overlay and
-        then writing EEPROM drops Super highlights: the clear turns the
-        overlay off, and a failed or slow save means the highlight frame never
-        lands. Push the highlight colors over the music frame instead. Stock
-        firmware did change the live effect, so restore those registers
-        without another EEPROM save.
-        """
-        self._music_frame = None
-        self.last_led_count = 0
-        self.last_led_index = -1
-        pushing = (
-            self.config["per_key"]["push_to_keyboard"]
-            and self.per_key
-            and self.transport is not None
-            and not self.config["music"]["enabled"]
-        )
-        if pushing:
-            self.push_per_key()
-            return
-        if self.per_key and self.transport is not None:
-            self.clear_per_key()
-        self.frame_kind = ""
-        if self.transport is not None:
-            self.apply_lighting(force=True, push_ha=False, save=False)
 
     def snapshot(self, include_keymap=False):
         section = self.config["home_assistant"]
         token_set = bool(section["token"] or self.environ.get(section["token_env"]) or section["token_file"])
         lighting = dict(self.config["lighting"])
-        profile = self.active_profile()
         device = self.device or {}
+        show = self.config["screensaver"]
         body = {
             "connected": self.transport is not None,
             "keyboardName": device.get("name") or ("NuPhy Air96 V2" if device else ""),
@@ -761,37 +633,23 @@ class Backend:
             "effects": [{"id": index, "name": name} for index, name in enumerate(EFFECTS)],
             "layers": list(LAYERS),
             "layout": KEYS,
-            "highlights": self.highlights(),
-            "modifiers": {
-                "enabled": self.config["modifiers"]["enabled"],
-                "held": self.held,
-                "heldNames": held_names(self.held),
-                "permission": self.modifier_permission,
-            },
             "perKey": {
                 "supported": self.per_key,
-                "push": self.config["per_key"]["push_to_keyboard"],
-                "highlights": self.config["per_key"]["enabled"],
                 "reason": self.per_key_reason,
-                "timeoutMs": (self.per_key_caps or {}).get("timeout_ms"),
             },
-            "music": {
-                "enabled": self.config["music"]["enabled"],
-                "effect": self.config["music"]["effect"],
-                "mode": "per-key" if self.per_key else "via",
-                "error": self.music_error,
-            },
-            "profile": {
-                "id": profile["id"] if profile else "",
-                "name": profile["name"] if profile else "",
-                "windowClass": self.window_class,
-                "windowTitle": self.window_title,
-                "submap": self.submap,
+            "screensaver": {
+                "enabled": show["enabled"],
+                "effect": show["effect"],
+                "effectName": effect_name(show["effect"]),
+                "active": self.screensaver_active,
             },
             "homeAssistant": {
                 "enabled": section["enabled"],
                 "url": section["url"],
                 "entities": section["entities"],
+                "hex": section["hex"],
+                "brightness": section["brightness"],
+                "followTheme": section["follow_theme"],
                 "tokenEnv": section["token_env"],
                 "tokenFile": section["token_file"],
                 "configured": token_set,
@@ -912,69 +770,37 @@ def describe_runtime(backend, heartbeat=None, processes=None):
         )
     else:
         lines.append(
-            "No bar worker is running. Super highlights and music are sent by that process. "
-            "`music on` only saves the setting. ./install.sh links the plugin; then enable it and restart the shell if the bar is not up."
+            "No bar worker is running. ./install.sh links the plugin and restarts the worker. "
+            "Enable it, then restart the shell if the bar icon is missing."
         )
 
-    push = bool(backend.config["per_key"]["push_to_keyboard"])
-    music_on = bool(backend.config["music"]["enabled"])
-    if not push:
-        lines.append(
-            "Per-key push is off in the saved config. The first plugin wrote that default, and turning the "
-            "default on later does not change the file. Nothing is sent for Super highlights. "
-            "Run: python3 air96_cli.py push on"
-        )
+    if backend.per_key is True:
+        lines.append("The per-key overlay is cleared. The whole board uses the VIA solid color.")
     elif backend.per_key is False:
-        lines.append("This keyboard did not accept per-key colors, so individual keys are not painted.")
-    elif music_on:
-        lines.append(
-            "Music mode is on, so the visualizer owns the keys and Super highlights are not drawn. "
-            "Run: python3 air96_cli.py music off"
-        )
-    elif not fresh:
-        lines.append("Push is on in this config, but no current worker is sending frames to the keyboard.")
-    else:
-        lines.append(
-            "Super highlights use the modifier mask the keyboard reports. The optional evdev udev rule is not required."
-        )
-
-    if getattr(backend, "mods_from_keyboard", None) is True:
-        from air96_binds import held_names
-        names = "+".join(held_names(backend.held)) or "none"
-        lines.append(f"The keyboard reports modifiers: {names}.")
-    elif backend.per_key and getattr(backend, "mods_from_keyboard", None) is False:
-        lines.append(
-            "The keyboard did not answer the modifier report (0xA9). Super+Shift cannot change the highlights "
-            "until this keymap is running. The evdev rule is only a fallback."
-        )
-
-    if music_on and fresh:
-        recorder = " ".join(heartbeat.get("recorder") or [])
-        if heartbeat.get("musicError"):
-            lines.append(f"Music: {heartbeat.get('musicError')}")
-        elif heartbeat.get("stalled"):
-            lines.append("Music is on, but the recorder has stopped sending samples. The lights keep the last frame unless they are faded.")
-        else:
-            rms = heartbeat.get("rms")
-            detail = f" rms={rms:.3f}" if isinstance(rms, (int, float)) else ""
-            lines.append(f"Music is playing through the worker.{detail} Source: {recorder or 'not started'}.")
-    elif music_on:
-        lines.append("Music is saved as on. Only the bar worker opens the speaker monitor. `music on` does not play it.")
+        lines.append("Stock firmware. The whole board uses the VIA solid color.")
 
     theme = backend.theme_color()
     stored = backend.config["lighting"]["hex"]
-    if backend.config["lighting"]["follow_theme"] and theme and theme.lower() != stored.lower():
-        lines.append(
-            f"Theme follow is on, so the keyboard color is the theme {theme}. "
-            f"lighting.hex {stored} is only the stored color and is not what follow writes."
-        )
+    if backend.config["lighting"]["follow_theme"] and theme:
+        lines.append(f"Keyboard theme follow is on. The color is {theme}. Brightness is {backend.config['lighting']['brightness']}.")
+    else:
+        lines.append(f"Keyboard theme follow is off. The color is {stored}.")
+    if backend.config["screensaver"]["enabled"]:
+        state = "running" if backend.screensaver_active else "waiting"
+        lines.append(f"Screensaver light show is on ({state}). It uses {effect_name(backend.config['screensaver']['effect'])} and is not saved.")
+    section = backend.config["home_assistant"]
+    if section["enabled"]:
+        if section["follow_theme"]:
+            lines.append("Home Assistant follows the theme color.")
+        else:
+            lines.append(f"Home Assistant uses {section['hex']} at brightness {section['brightness']}.")
 
     runtime = {
         "workerMatches": matches,
         "workerFresh": fresh,
         "workerScript": script,
         "revision": our_revision,
-        "push": push,
-        "music": music_on,
+        "followTheme": bool(backend.config["lighting"]["follow_theme"]),
+        "screensaver": bool(backend.config["screensaver"]["enabled"]),
     }
     return {"lines": lines, "runtime": runtime}

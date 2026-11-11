@@ -23,7 +23,7 @@ Installs ~/.config/omarchy/hooks/theme-set.d/50-air96-sync so Omarchy runs
 
   --no-plugin   Hook only. Theme follow works from the CLI.
   --plugin      Link this checkout to ~/.config/omarchy/plugins/local.nuphy-air96,
-                restart the bar worker, and turn per-key push on.
+                and restart the bar worker.
   --uninstall   Remove the hook, the recorded CLI path, and a plugin symlink
                 this script created. Config and a plugin backup stay.
 
@@ -96,7 +96,6 @@ install_plugin() {
   echo "Enable it with: omarchy plugin enable local.nuphy-air96"
   echo "The icon target is: omarchy-shell air96 toggle"
   restart_worker
-  python3 "$CLI" push on
 }
 
 uninstall() {
