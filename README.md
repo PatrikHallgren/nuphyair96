@@ -85,9 +85,10 @@ Check discovery without writing anything:
 ```sh
 python3 air96_cli.py devices
 python3 air96_cli.py status
+python3 air96_cli.py --debug status
 ```
 
-`setupIssue: "hid-permission"` means the node exists but this user cannot read and write it. `not-found` means no matching raw HID interface (cable unplugged, or only the dongle is connected).
+`setupIssue: "hid-permission"` means the node exists but this user cannot read and write it. `not-found` means no matching raw HID interface (cable unplugged, or only the dongle is connected). `--debug` prints the 32-byte report that was written and whether a report came back or the read timed out.
 
 ## Config
 

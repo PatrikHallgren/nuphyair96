@@ -8,7 +8,7 @@ Stock Air96 V2 firmware (official 2.1.5) cannot show a host-chosen color on one 
 
 The on-screen keyboard in the bar panel works on that firmware. The Omarchy keymap in [firmware/](../firmware/) adds a raw HID overlay the plugin can drive. USB only. Bluetooth and the 2.4G dongle do not expose the interface.
 
-`per_key.push_to_keyboard` defaults to on. The worker still probes first. A stock board answers `0xFF` and the plugin leaves the matrix effect alone. A board that acknowledges the probe receives highlight frames, resent about once a second so the 2 second firmware timeout does not drop them. Turning the push off sends `0xA8` and reapplies the VIA effect.
+`per_key.push_to_keyboard` defaults to on. The worker still probes first. A stock board answers `0xFF` and the plugin leaves the matrix effect alone. Ordinary VIA commands, including the version query `status` sends first, are not taken by this keymap: QMK sends those replies. The keymap sends a reply itself only for the three commands below. A board that acknowledges the probe receives highlight frames, resent about once a second so the 2 second firmware timeout does not drop them. Turning the push off sends `0xA8` and reapplies the VIA effect.
 
 Do not EEPROM-save these frames. They are a live overlay. The plugin's music mode uses the same packets and, on stock firmware, pulses global brightness and hue without saving.
 

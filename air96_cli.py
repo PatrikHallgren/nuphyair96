@@ -14,7 +14,7 @@ import sys
 
 from air96_backend import Backend, file_lock
 from air96_ha import HomeAssistantError, prepare_token
-from air96_hid import HidError
+from air96_hid import HidError, set_debug
 from air96_profiles import import_vscode_keybindings
 from air96_worker import refresh_device
 
@@ -125,6 +125,7 @@ def command_import_vscode(_backend, args):
 def parser():
     program = argparse.ArgumentParser(prog="air96_cli.py", description="NuPhy Air96 V2 commands for Omarchy")
     program.add_argument("--theme-dir", default="", help="Override the active Omarchy theme directory")
+    program.add_argument("--debug", action="store_true", help="Print the raw HID report that was sent, and what came back or timed out")
     commands = program.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
     commands.add_parser("devices")
@@ -152,6 +153,7 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
+    set_debug(args.debug)
     backend = build(args)
     handlers = {
         "status": command_status,

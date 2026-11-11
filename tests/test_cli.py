@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import pty
+import os
 import stat
 import subprocess
 import sys
@@ -13,6 +15,8 @@ import support  # noqa: F401
 from air96_backend import Backend
 from air96_cli import main
 from air96_ha import HomeAssistantError
+from air96_hid import HidError, HidTransport, set_debug
+from air96_protocol import protocol_version_request
 from support import ROOT, FakeKeyboard
 
 
@@ -84,6 +88,7 @@ class CliTests(unittest.TestCase):
         text = stdout.getvalue()
         for name in ("status", "devices", "sync", "apply", "import-vscode", "music", "ha-token", "ha-test"):
             self.assertIn(name, text)
+        self.assertIn("--debug", text)
         with redirect_stderr(stderr):
             with self.assertRaises(SystemExit) as missing:
                 main([])
@@ -211,6 +216,34 @@ class CliTests(unittest.TestCase):
         self.assertIn("malformed", err)
         self.assertNotIn("UNIQUESECRETVALUE", out + err)
         self.assertEqual(path.read_text(), secret + "\n")
+
+    def test_debug_prints_the_report_when_the_keyboard_does_not_answer(self):
+        set_debug(False)
+        code, out, err = self.run_main(["--debug", "devices"])
+        self.assertEqual(code, 0, err)
+        import air96_hid
+        self.assertTrue(air96_hid.debug)
+        set_debug(False)
+        master, slave = pty.openpty()
+        try:
+            transport = HidTransport(os.ttyname(slave), timeout=0.05)
+            set_debug(True)
+            stderr = StringIO()
+            with redirect_stderr(stderr):
+                with self.assertRaises(HidError) as raised:
+                    transport.transact(protocol_version_request())
+            message = str(raised.exception)
+            trace = stderr.getvalue()
+            sent = protocol_version_request().hex()
+            self.assertIn(sent, message)
+            self.assertIn("timed out", message)
+            self.assertIn(sent, trace)
+            self.assertIn("no report", trace)
+            transport.close()
+        finally:
+            set_debug(False)
+            os.close(master)
+            os.close(slave)
 
 
 if __name__ == "__main__":
