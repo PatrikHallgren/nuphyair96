@@ -145,7 +145,7 @@ class HyprEvents:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.setblocking(False)
         try:
-            sock.connect(path)
+            sock.connect(os.fspath(path))
         except OSError:
             sock.close()
             return False
@@ -158,19 +158,20 @@ class HyprEvents:
     def drain(self, backend):
         if not self.socket:
             return False
-        changed = False
+        closed = False
         while True:
             try:
                 chunk = self.socket.recv(65536)
             except BlockingIOError:
                 break
             except OSError:
-                self.close()
+                closed = True
                 break
             if not chunk:
-                self.close()
+                closed = True
                 break
             self.buffer += chunk
+        changed = False
         while b"\n" in self.buffer:
             line, self.buffer = self.buffer.split(b"\n", 1)
             text = line.decode("utf-8", errors="replace")
@@ -188,6 +189,9 @@ class HyprEvents:
             elif event == "configreloaded":
                 refresh_binds(backend)
                 changed = True
+        if closed:
+            # Parse first. close() drops a partial line from the dead socket.
+            self.close()
         return changed
 
     def close(self):
@@ -208,6 +212,12 @@ class ThemeWatch:
     def __init__(self, theme_dir):
         self.theme_dir = Path(theme_dir)
         self.libc = ctypes.CDLL(None, use_errno=True)
+        self.libc.inotify_init1.argtypes = (ctypes.c_int,)
+        self.libc.inotify_init1.restype = ctypes.c_int
+        self.libc.inotify_add_watch.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32)
+        self.libc.inotify_add_watch.restype = ctypes.c_int
+        self.libc.inotify_rm_watch.argtypes = (ctypes.c_int, ctypes.c_int)
+        self.libc.inotify_rm_watch.restype = ctypes.c_int
         self.fd = self.libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
         if self.fd < 0:
             raise OSError(ctypes.get_errno(), "inotify_init1 failed")
@@ -254,8 +264,9 @@ class ThemeWatch:
         os.close(self.fd)
 
 
-def serve():
-    backend = Backend()
+def serve(backend=None, stdin=None):
+    backend = backend or Backend()
+    source = sys.stdin if stdin is None else stdin
     backend.state_dir.mkdir(parents=True, exist_ok=True)
     with file_lock(backend.state_dir):
         pass  # Fail fast if another settings writer is wedged; the lock is per call below.
@@ -272,7 +283,7 @@ def serve():
             with file_lock(backend.state_dir):
                 execute(backend, {"action": "sync", "config": {"force": True}})
         selector = selectors.DefaultSelector()
-        selector.register(sys.stdin, selectors.EVENT_READ, "input")
+        selector.register(source, selectors.EVENT_READ, "input")
         watcher = None
         hypr = HyprEvents()
         modifiers = EvdevModifiers()
@@ -326,7 +337,7 @@ def serve():
                         if deadline is None:
                             deadline = time.monotonic() + 0.05
                 else:
-                    chunk = os.read(sys.stdin.fileno(), MAX_REQUEST)
+                    chunk = os.read(source.fileno(), MAX_REQUEST)
                     if not chunk:
                         _close_transport(backend)
                         modifiers.close()
@@ -339,6 +350,7 @@ def serve():
                         raise ValueError("Request exceeds maximum size")
                     while b"\n" in buffer:
                         line, buffer = buffer.split(b"\n", 1)
+                        request = None
                         try:
                             request = json.loads(line)
                             if not isinstance(request, dict):
@@ -349,7 +361,10 @@ def serve():
                                 refresh_device(backend)
                             emit(request)
                         except (ValueError, TypeError, json.JSONDecodeError) as exc:
-                            print(json.dumps({"error": str(exc)[:600], "protocolError": True}), flush=True)
+                            body = {"error": str(exc)[:600], "protocolError": True}
+                            if isinstance(request, dict):
+                                body["requestId"] = request.get("id")
+                            print(json.dumps(body), flush=True)
             now = time.monotonic()
             if deadline is not None and now >= deadline:
                 if "device" in pending:

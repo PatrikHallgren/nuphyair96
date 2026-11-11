@@ -10,6 +10,8 @@ import json
 import sys
 
 from air96_backend import Backend, file_lock
+from air96_ha import HomeAssistantError
+from air96_hid import HidError
 from air96_profiles import import_vscode_keybindings
 from air96_worker import refresh_device
 
@@ -94,7 +96,7 @@ def parser():
 
 
 def main(argv=None):
-    args = parser().parse(argv)
+    args = parser().parse_args(argv)
     backend = build(args)
     handlers = {
         "status": command_status,
@@ -105,7 +107,7 @@ def main(argv=None):
     }
     try:
         code = handlers[args.command](backend, args)
-    except (OSError, ValueError, TimeoutError) as exc:
+    except (OSError, ValueError, TimeoutError, HomeAssistantError, HidError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     return code or 0

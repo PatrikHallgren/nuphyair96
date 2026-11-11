@@ -15,13 +15,14 @@ No Air96, no Omarchy install, and no Quickshell were available in the environmen
 | Protocol | 100 keys, LED indexes, VIA lighting packets, HSV, keymap offsets, the per-key probe, and the 9-LED packet split. |
 | Backend | Theme follow sends solid color and skips a duplicate save. Follow off does not write. Snapshot omits the token. Stock probe refuses per-key. A fake custom ack stores a frame. Keymap apply conflicts leave the keyboard unchanged. |
 | HID discovery | The report-descriptor parser finds usage page `0xFF60` usage `0x61`. Only product ids `0x3265` and `0x3266` match, not an Air75 id. |
+| CLI and worker | `main(["--help"])` and every subcommand run with the device layer mocked. The worker reads one NDJSON request from a pipe and exits. inotify, a fake Hyprland socket, evdev `open_nodes`, and a local Home Assistant HTTP POST are exercised the same way. |
 
 ## Implemented, not run on hardware
 
 - Opening `/dev/hidraw`, the 32-byte VIA transaction, and the `EINVAL` report-id retry.
 - Lighting get, set, and EEPROM save.
 - Full keymap read and single-key write.
-- inotify on the Omarchy theme directory and the theme-set hook.
+- inotify against Omarchy's live theme directory and the installed theme-set hook. A temporary directory is covered by the unit tests.
 - Hyprland socket2 `activewindow` and `submap` events.
 - Home Assistant HTTP POST.
 - Evdev open on a real event node. The 24-byte `input_event` layout is the 64-bit one Omarchy uses. A 32-bit kernel is not parsed.

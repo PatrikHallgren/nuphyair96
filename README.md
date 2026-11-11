@@ -163,6 +163,8 @@ Not possible on stock firmware. The Binds tab is the feature that works without 
 python3 -m unittest discover -s tests -v
 ```
 
+The suite parses every CLI subcommand, runs `main(["--help"])`, and drives the worker, theme watcher, Home Assistant client, and evdev listener with mocks. It does not open a keyboard.
+
 ## What to try on the keyboard
 
 Use the USB cable.
