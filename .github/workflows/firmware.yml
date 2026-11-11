@@ -1,0 +1,32 @@
+name: firmware
+
+on:
+  push:
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+  pull_request:
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the ARM toolchain and QMK CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi dfu-util python3-pip
+          python3 -m pip install --user --break-system-packages qmk
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build the Omarchy keymap
+        run: firmware/build.sh
+      - name: Upload the firmware image
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuphy-air96-v2-omarchy
+          path: firmware/.build/nuphy_air96_v2_ansi_omarchy.bin
+          if-no-files-found: error

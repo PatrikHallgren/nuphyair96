@@ -1,0 +1,13 @@
+# Optional. Install only if you turn on modifier listening.
+# This grants the active seat read access to the keyboard's event node so the
+# plugin can see Shift, Ctrl, Alt, and Super. The kernel still delivers every
+# key on that node. The plugin does not grab the device and discards every
+# other key without logging it. A separate file keeps HID access from implying
+# event-node access.
+# A 2.4G dongle may use another product id. The name match covers a node whose
+# name contains Air96. A generic dongle name will not match; use the USB cable
+# for VIA, and add a specific product id here if you identify the dongle.
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="19f5", ATTRS{idProduct}=="3265", TAG+="uaccess"
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="19f5", ATTRS{idProduct}=="3266", TAG+="uaccess"
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*Air96*", TAG+="uaccess"
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*AIR96*", TAG+="uaccess"

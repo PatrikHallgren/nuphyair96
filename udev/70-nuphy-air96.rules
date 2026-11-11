@@ -1,0 +1,8 @@
+# NuPhy Air96 V2 raw HID (VIA). The name sorts before 73-seat-late.rules so
+# logind/seatd can turn TAG uaccess into an ACL for the active seat.
+# Do not set MODE or GROUP here.
+# Vendor 19f5. Product 3266 is keyboard.json / VIA JSON. Product 3265 is the
+# id reported by later 2.1.x firmware. This rule does not match every NuPhy
+# board: Air75 V3 uses a different product id and a different protocol.
+ACTION!="remove", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="19f5", ATTRS{idProduct}=="3265", TAG+="uaccess"
+ACTION!="remove", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="19f5", ATTRS{idProduct}=="3266", TAG+="uaccess"

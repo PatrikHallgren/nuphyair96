@@ -1,0 +1,17 @@
+{
+  "id": "minecraft",
+  "name": "Minecraft",
+  "match": {
+    "class": ["Minecraft", "minecraft"],
+    "title_contains": ["Minecraft"]
+  },
+  "keys": [
+    {"key": "w", "mods": [], "label": "Walk", "color": "#9ece6a"},
+    {"key": "a", "mods": [], "label": "Left", "color": "#9ece6a"},
+    {"key": "s", "mods": [], "label": "Back", "color": "#9ece6a"},
+    {"key": "d", "mods": [], "label": "Right", "color": "#9ece6a"},
+    {"key": "space", "mods": [], "label": "Jump", "color": "#e0af68"},
+    {"key": "e", "mods": [], "label": "Inventory", "color": "#89b4fa"},
+    {"key": "esc", "mods": [], "label": "Pause", "color": "#f7768e"}
+  ]
+}

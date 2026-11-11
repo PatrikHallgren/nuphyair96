@@ -1,0 +1,15 @@
+{
+  "id": "code",
+  "name": "Code",
+  "match": {
+    "class": ["Code", "code-oss", "Cursor", "cursor", "code"],
+    "title_contains": []
+  },
+  "keys": [
+    {"key": "p", "mods": ["ctrl", "shift"], "label": "Command palette", "color": "#89b4fa"},
+    {"key": "s", "mods": ["ctrl"], "label": "Save", "color": "#9ece6a"},
+    {"key": "f", "mods": ["ctrl"], "label": "Find", "color": "#e0af68"},
+    {"key": "grave", "mods": ["ctrl"], "label": "Terminal", "color": "#bb9af7"},
+    {"key": "b", "mods": ["ctrl"], "label": "Sidebar", "color": "#7dcfff"}
+  ]
+}
