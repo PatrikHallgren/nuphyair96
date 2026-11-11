@@ -292,6 +292,30 @@ def per_key_delta_packets(previous, colors, minimum=12):
     return packets
 
 
+def per_key_packet_span(packets, limit=100):
+    """How many key LEDs a batch covers, and the highest key index written.
+
+    Side LEDs (index >= ``limit``) are not counted. A full key frame is
+    ``limit`` LEDs ending at ``limit - 1``. A frame that dies after the left
+    third ends near index 32.
+    """
+    sent = 0
+    last = -1
+    for payload in packets or []:
+        if len(payload) < 3 or payload[0] != CMD_PER_KEY_SET:
+            continue
+        offset = payload[1]
+        count = payload[2]
+        for index in range(count):
+            led = offset + index
+            if led >= limit:
+                continue
+            sent += 1
+            if led > last:
+                last = led
+    return sent, last
+
+
 def effect_name(index):
     if 0 <= index < len(EFFECTS):
         return EFFECTS[index]

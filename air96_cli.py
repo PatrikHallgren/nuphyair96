@@ -131,13 +131,18 @@ def run_music_debug(backend, session, cycles=None, pause=None, emit=print):
                     sent = backend.message or "sent"
                 except (OSError, TimeoutError, ProtocolError, HidError) as exc:
                     sent = str(exc)[:200]
+            bands = levels.get("bands") or []
+            band_text = ",".join(f"{float(value):.2f}" for value in bands)
             emit(
-                "rms={rms:.3f} bass={bass:.3f} loud={loud:.3f} silent={silent} bytes={bytes} {sent}".format(
+                "rms={rms:.3f} bass={bass:.3f} loud={loud:.3f} silent={silent} bytes={bytes} leds={leds} last={last} bands=[{bands}] {sent}".format(
                     rms=float(levels.get("rms") or 0),
                     bass=float(levels.get("bass") or 0),
                     loud=float(levels.get("loudness") or 0),
                     silent=bool(levels.get("silent")),
                     bytes=bytes_total,
+                    leds=int(getattr(backend, "last_led_count", 0) or 0),
+                    last=int(getattr(backend, "last_led_index", -1)),
+                    bands=band_text,
                     sent=sent,
                 )
             )

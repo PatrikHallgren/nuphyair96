@@ -213,7 +213,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(count, 2)
         self.assertIn("@DEFAULT_MONITOR@", lines[0])
         self.assertIn("rms=0.420", lines[2])
+        self.assertIn("bands=[0.20]", lines[2])
+        self.assertIn("leds=0", lines[2])
         self.assertIn("silent=True", lines[3])
+        self.assertIn("bands=[0.00]", lines[3])
 
     def test_ha_token_sanitizes_and_ha_test_reports_status(self):
         secret = "long-lived-token-value"

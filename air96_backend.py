@@ -278,6 +278,8 @@ class Backend:
         self.frame_kind = ""
         self._music_frame = None
         self.last_direct = 0.0
+        self.last_led_count = 0
+        self.last_led_index = -1
         self._config_mtime = 0
         self._load()
 
@@ -390,7 +392,7 @@ class Backend:
             return effect, color
         return lighting["effect"], lighting["hex"]
 
-    def apply_lighting(self, patch=None, force=False, push_ha=True):
+    def apply_lighting(self, patch=None, force=False, push_ha=True, save=True):
         if patch is not None:
             self.config = validate_config({**self.config, "lighting": {**self.config["lighting"], **patch}})
             self._save()
@@ -405,7 +407,8 @@ class Backend:
         self._transact(lighting_set(VAL_BRIGHTNESS, lighting["brightness"]))
         self._transact(lighting_set(VAL_SPEED, lighting["speed"]))
         self._transact(lighting_set(VAL_COLOR, hue, sat))
-        self._transact(lighting_save())
+        if save:
+            self._transact(lighting_save())
         self.applied_signature = signature
         self.hardware = {"effect": effect, "effectName": effect_name(effect), "brightness": lighting["brightness"],
                          "speed": lighting["speed"], "hue": hue, "sat": sat}
@@ -661,8 +664,10 @@ class Backend:
         from air96_audio import frame_colors, via_pulse
         tint = self.theme_color() or self.config["lighting"]["hex"]
         if self.per_key:
+            from air96_protocol import per_key_packet_span
             colors = frame_colors(levels, self.config["music"]["effect"], tint)
             packets = per_key_delta_packets(self._music_frame, colors)
+            sent, last = per_key_packet_span(packets)
             old_timeout = getattr(self.transport, "timeout", None)
             if old_timeout is not None:
                 self.transport.timeout = min(float(old_timeout), 0.08)
@@ -679,11 +684,15 @@ class Backend:
             finally:
                 if old_timeout is not None:
                     self.transport.timeout = old_timeout
+            self.last_led_count = sent
+            self.last_led_index = last
             self._music_frame = [tuple(color) for color in colors]
             self.last_direct = time.monotonic()
             self.frame_kind = "music"
             self.music_error = ""
             self.message = "Music frame sent" if packets else "Music frame held"
+            if packets:
+                self.message += f" leds={sent} last={last}"
             return
         if self.transport is None:
             raise ProtocolError("Air96 is not connected over USB")
@@ -699,15 +708,37 @@ class Backend:
             "brightness": pulse["brightness"], "speed": self.config["lighting"]["speed"],
             "hue": pulse["hue"], "sat": pulse["sat"],
         }
+        self.last_led_count = 0
+        self.last_led_index = -1
         self.message = "Music pulse sent (stock firmware, not saved)"
 
     def release_overlay(self):
-        """Leave music or a direct frame and restore the saved VIA effect."""
-        if self.per_key:
+        """Leave music and put the previous lighting back.
+
+        Per-key music never changes the VIA effect. Clearing the overlay and
+        then writing EEPROM drops Super highlights: the clear turns the
+        overlay off, and a failed or slow save means the highlight frame never
+        lands. Push the highlight colors over the music frame instead. Stock
+        firmware did change the live effect, so restore those registers
+        without another EEPROM save.
+        """
+        self._music_frame = None
+        self.last_led_count = 0
+        self.last_led_index = -1
+        pushing = (
+            self.config["per_key"]["push_to_keyboard"]
+            and self.per_key
+            and self.transport is not None
+            and not self.config["music"]["enabled"]
+        )
+        if pushing:
+            self.push_per_key()
+            return
+        if self.per_key and self.transport is not None:
             self.clear_per_key()
         self.frame_kind = ""
         if self.transport is not None:
-            self.apply_lighting(force=True, push_ha=False)
+            self.apply_lighting(force=True, push_ha=False, save=False)
 
     def snapshot(self, include_keymap=False):
         section = self.config["home_assistant"]
