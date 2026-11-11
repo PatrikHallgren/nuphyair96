@@ -8,13 +8,13 @@ Stock Air96 V2 firmware (official 2.1.5) cannot show a host-chosen color on one 
 
 The on-screen keyboard in the bar panel works on that firmware. The Omarchy keymap in [firmware/](../firmware/) adds a raw HID overlay the plugin can drive. USB only. Bluetooth and the 2.4G dongle do not expose the interface.
 
-`per_key.push_to_keyboard` defaults to on. The worker still probes first. A stock board answers `0xFF` and the plugin leaves the matrix effect alone. Ordinary VIA commands, including the version query `status` sends first, are not taken by this keymap: QMK sends those replies. The keymap sends a reply itself only for the three commands below. A board that acknowledges the probe receives highlight frames, resent about once a second so the 2 second firmware timeout does not drop them. Turning the push off sends `0xA8` and reapplies the VIA effect.
+`per_key.push_to_keyboard` defaults to on. The worker still probes first. A stock board answers `0xFF` and the plugin leaves the matrix effect alone. Ordinary VIA commands, including the version query `status` sends first, are not taken by this keymap: QMK sends those replies. The keymap sends a reply itself only for the commands below. A board that acknowledges the probe receives highlight frames, resent about once a second so the 2 second firmware timeout does not drop them. Turning the push off sends `0xA8` and reapplies the VIA effect.
 
 Do not EEPROM-save these frames. They are a live overlay. The plugin's music mode uses the same packets and, on stock firmware, pulses global brightness and hue without saving.
 
 ## Probe, write, clear
 
-All three are 32-byte reports. The batch layout (index, count, up to 9 RGB triples) matches the streaming packets in ravila4/nuphy-rgb-music. The command bytes stay `0xA6` / `0xA7` / `0xA8` so the existing probe does not change. That project targets the Air75 V2.
+These are 32-byte reports. The batch layout (index, count, up to 9 RGB triples) matches the streaming packets in ravila4/nuphy-rgb-music. The command bytes stay `0xA6` / `0xA7` / `0xA8`, plus `0xA9` for the modifier mask. That project targets the Air75 V2.
 
 Probe `0xA6`:
 
@@ -30,7 +30,7 @@ Stock firmware: byte 0 comes back `0xFF`. The Omarchy keymap: byte 0 is `0xA6`, 
 | --- | --- |
 | 6 | paintable LED count, `100` |
 | 7 | LEDs per packet, `9` |
-| 8 | flags: bit 0 timeout, bit 1 Super fallback, bit 2 clear command |
+| 8 | flags: bit 0 timeout, bit 2 clear command. Bit 1 (Super fallback) is no longer set |
 | 9–10 | timeout in milliseconds, big-endian `2000` |
 
 Set `0xA7`:
@@ -51,10 +51,19 @@ Clear `0xA8`:
 | 0 | `0xA8` |
 | 1–4 | ASCII `A96K` |
 
-The keymap echoes `0xA8` and returns to the normal matrix effect. A wrong magic byte is answered with `0xFF` and the overlay stays.
+The keymap echoes `0xA8` and returns to the normal matrix effect. A wrong magic byte is answered with `0xFF` and the overlay stays. Music mode does not send this between frames. A per-frame clear, or two seconds with no packet, is what flashes the normal effect back on.
+
+Mods `0xA9`:
+
+| Bytes | Content |
+| --- | --- |
+| 0 | `0xA9` |
+| 1–4 | ASCII `A96K` |
+
+The keymap echoes `0xA9`. Byte 5 is the Hyprland modmask (shift 1, ctrl 4, alt 8, super 64) from `get_mods()` and one-shot mods. Byte 6 is the raw QMK modifier byte. A wrong magic byte is `0xFF`. Stock firmware and the previous Omarchy image answer `0xFF` too; the plugin then leaves the last known mask alone.
 
 ## Timeout and disconnect
 
-Each accepted `0xA7` starts a 2000 ms timer. A probe with version `1`, while the overlay is already up, refreshes that timer. Silence, USB suspend, unplug, or a non-USB link clears the overlay. The Super-held highlight in the keymap then works on its own: basic keys on the Mac or Windows base layer, and it stays out of the way while Fn or the M layer is showing the readable lights.
+Each accepted `0xA7` starts a 2000 ms timer. A probe with version `1`, while the overlay is already up, refreshes that timer and does not clear the picture. Silence, USB suspend, unplug, or a non-USB link clears the overlay. The keymap does not paint a Super mask of its own. Highlights come from the host, using `0xA9` and `hyprctl binds`.
 
 Flashing steps, the pinned QMK commit, and how to return to official 2.1.5 are in [firmware/README.md](../firmware/README.md).

@@ -152,9 +152,11 @@ The three failures are separate, and none of them includes the token text:
 
 The Binds tab reads `hyprctl binds -j` and, when the shell is running, Hyprland's `socket2` for the focused window, submap, and config reloads.
 
-With no modifier held, keys that complete a Super bind in the current submap are dim. Mouse binds and catch-alls are skipped. When a modifier mask is known, only keys that complete that exact mask are bright. Super+Shift is mask 65. The highlight is the non-modifier key, so a Windows-mode Option keycap that sends Super is not itself the lit key.
+With no modifier held, keys whose bind is exactly Super in the current submap are dim. Super+Shift, Super+Alt, and the other combinations stay dark until those modifiers are held. Mouse binds, catch-alls, and binds from another submap are skipped. When modifiers are held, only keys that complete that exact mask are bright, and they are much brighter than the rest of the board. Super+Shift is mask 65. Super+Shift+Alt is 73. The highlight is the non-modifier key, so a Windows-mode Option keycap that sends Super is not itself the lit key.
 
-Hyprland's socket does not report modifier state. Detection is an optional evdev listener, off by default. It reads the 64-bit `input_event` (24 bytes), keeps Shift, Ctrl, Alt, and Super, and drops every other key without logging it. It does not grab the device. Turning the switch on does not open the event node until the shell restarts.
+The flashed keymap reports that mask (command `0xA9`) from the keys you are holding on the Air96. Super+Shift, Super+Ctrl, Super+Alt, and Super+Shift+Alt each light their own set. Hyprland's socket does not report modifiers, and the keyboard no longer paints every basic key while Super is down. That old mask is why most of the board used to light up, and why adding Shift changed nothing. Reflash the image from this change to get both.
+
+An optional evdev listener is still off by default. It reads the 64-bit `input_event` (24 bytes), keeps Shift, Ctrl, Alt, and Super, and drops every other key without logging it. It does not grab the device. Turning the switch on does not open the event node until the shell restarts. On this firmware the keyboard report is used when it answers, so the udev rule is only needed for an older image.
 
 Install the second udev rule only if you want that:
 
@@ -167,7 +169,7 @@ Replug, enable listening, restart the shell. The `input` group also works and ex
 
 ## App profiles
 
-When the focused window class changes, a profile can highlight extra keys. An active Hyprland bind on the same key wins.
+When the focused window class changes, a profile can highlight extra keys while no modifier is held. A Hyprland bind on the same key wins. Holding Super, or Super plus other modifiers, shows only that combination.
 
 Profiles are JSON:
 
@@ -206,9 +208,9 @@ python3 air96_cli.py music on --effect vu
 
 `spectrum` paints columns across the keyboard. `vu` uses one level for every key. Colors are tinted by the theme accent, or by the configured hex color when theme follow is off. The bar plugin has to be running; the command only saves the setting.
 
-Audio is the PipeWire or PulseAudio monitor (`pw-record`, or `parecord` if that is what the system has). No extra Python packages. On the Omarchy keymap the frames use the per-key protocol. On stock firmware the worker pulses global brightness and hue through VIA about four times a second and does not write those pulses to EEPROM. Stopping music restores the saved effect.
+Audio is the PipeWire or PulseAudio monitor (`pw-record`, or `parecord` if that is what the system has). No extra Python packages. On the Omarchy keymap the frames use the per-key protocol. A beat rises quickly and falls slowly, silence under the noise gate stays dark, and a slow gain follower keeps a quiet song visible without stretching every frame to full scale. A bass hit lifts the left columns. Only LEDs that actually changed are written. An unchanged frame sends a probe, which refreshes the 2 second overlay timer. The clear command (`0xA8`) is not sent between frames; a gap longer than that timer, or a clear, is what flashes the normal effect back. On stock firmware the worker pulses global brightness and hue through VIA about four times a second and does not write those pulses to EEPROM. Stopping music restores the saved effect.
 
-The visualizer idea and the 9-LED batch layout come from [ravila4/nuphy-rgb-music](https://github.com/ravila4/nuphy-rgb-music) by Ricardo Avila, MIT. The capture and FFT here are separate, and the command bytes stay the Air96 probe.
+The visualizer idea, the decay, and the 9-LED batch layout come from [ravila4/nuphy-rgb-music](https://github.com/ravila4/nuphy-rgb-music) by Ricardo Avila, MIT. That project targets the Air75 V2 at about 30 frames a second. This board's HID path sends the LEDs that moved instead of a full frame every tick. The capture and FFT here are separate, and the command bytes stay the Air96 probe.
 
 ## Tests
 
@@ -227,10 +229,10 @@ Use the USB cable.
 3. `./install.sh --no-plugin`, then `apply --follow on`, then switch themes, including Tokyo Night (`keyboard.rgb` is `ff00ff` with no hash). The keyboard should change without running the command again. Without that hook, follow only applies when you run it yourself.
 4. Read the keymap, change one Windows-layer key, Apply, and confirm it. Change that key in VIA or on another host, then Apply the old draft: the plugin should refuse and leave the new value in place.
 5. Point Home Assistant at one `light.*` entity and confirm an already-on light follows a successful color write without changing brightness. An off light stays off. Confirm `status` does not print the token.
-6. Open the Binds tab. Super keys should be dim before you enable evdev. After the modifier rule, a replug, and a shell restart, hold Super and then Super+Shift and check that the bright keys change.
+6. Open the Binds tab. After the reflash below, hold Super, then Super+Shift, then Super+Shift+Alt. Each combination should light a different, smaller set, clearly brighter than the other keys. The optional modifier udev rule is only for an older image.
 7. Focus Firefox, then a terminal. Firefox keys should appear only on Firefox. On stock firmware the per-key probe should fail and the physical backlight should stay on the VIA effect.
 8. After flashing the Omarchy keymap, `status` should show `perKey.supported` true. Turn on push if it is off. Super binds should appear on the keys, and killing the bar plugin should return the normal effect within about two seconds. Fn readable lights should still show while Fn is held.
-9. Turn music on with something playing. The keys should move. Turn it off and the previous effect should come back. On a stock board, the same switch should only pulse the global color.
+9. Turn music on with something playing. A beat should brighten and then fall off, and silence should stay dark instead of flickering back to the normal effect. Turn it off and the previous effect should come back. On a stock board, the same switch should only pulse the global color.
 
 The QML panel was not launched here. If the bar icon fails to load, the Python CLI still applies lighting and syncs the theme.
 

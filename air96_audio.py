@@ -104,13 +104,66 @@ def analyze(samples, rate=RATE, bands=BANDS):
             energy += magnitude
             bins += 1
         values.append(energy / bins if bins else 0.0)
-    peak = max(values) if values else 0.0
-    if peak > 0:
-        values = [min(1.0, value / peak) for value in values]
-    level = min(1.0, rms(window) * 2.2)
+    # Leave the bands in absolute units. Dividing by this frame's peak makes
+    # silence and a kick the same shape, so the lights never look like music.
+    level = min(1.0, rms(window))
     bass = sum(values[:3]) / 3 if values else 0.0
     highs = sum(values[-3:]) / 3 if values else 0.0
     return {"rms": level, "bands": values, "bass": bass, "highs": highs}
+
+
+class Envelope:
+    """Fast attack, slow decay, a noise gate, and a slow loudness follower.
+
+    nuphy-rgb-music decays each frame (about 0.97 at 30 fps) so a beat has a
+    tail. This HID path cannot repaint every LED that often, so the tail is
+    a bit faster and the picture only sends the LEDs that moved.
+    """
+
+    def __init__(self, attack=0.65, decay=0.88, open_at=0.018, close_at=0.010):
+        self.attack = attack
+        self.decay = decay
+        self.open_at = open_at
+        self.close_at = close_at
+        self.gain = 0.05
+        self.open = False
+        self.level = 0.0
+        self.bands = [0.0] * BANDS
+
+    def update(self, raw):
+        rms_level = float(raw.get("rms") or 0.0)
+        if self.open:
+            self.open = rms_level >= self.close_at
+        else:
+            self.open = rms_level >= self.open_at
+        incoming = [float(value) for value in (raw.get("bands") or [])]
+        if len(incoming) < BANDS:
+            incoming.extend(0.0 for _ in range(BANDS - len(incoming)))
+        incoming = incoming[:BANDS]
+        if not self.open:
+            incoming = [0.0] * BANDS
+            peak = 0.0
+        else:
+            peak = max(incoming) if incoming else 0.0
+            if peak > self.gain:
+                self.gain = self.gain * 0.6 + peak * 0.4
+            else:
+                self.gain = self.gain * 0.995 + peak * 0.005
+            self.gain = max(self.gain, 1e-4)
+        target = [min(1.0, value / self.gain) for value in incoming] if self.open else [0.0] * BANDS
+        rising = (max(target) if target else 0.0) >= self.level
+        keep = (1.0 - self.attack) if rising else self.decay
+        take = 1.0 - keep
+        blended = [old * keep + new * take for old, new in zip(self.bands, target)]
+        self.bands = blended
+        self.level = max(blended) if blended else 0.0
+        return {
+            "rms": 0.0 if not self.open and self.level < 0.04 else min(1.0, max(self.level, rms_level if self.open else 0.0)),
+            "bands": blended,
+            "bass": sum(blended[:3]) / 3,
+            "highs": sum(blended[-3:]) / 3,
+            "silent": (not self.open) and self.level < 0.04,
+        }
 
 
 def _tint(color, scale):
@@ -125,17 +178,21 @@ def frame_colors(levels, effect, tint, keys=None):
     colors = [(0, 0, 0)] * LED_COUNT
     bands = list(levels.get("bands") or [])
     if effect == "vu" or not bands:
-        scale = 0.08 + 0.92 * float(levels.get("rms") or 0)
+        scale = 0.92 * float(levels.get("rms") or 0)
         color = _tint(tint, scale)
         for key in keys:
             colors[key["led"]] = color
         return colors
     span = max(key["x"] + key["w"] for key in keys)
     last = len(bands) - 1
+    bass = max(0.0, min(1.0, float(levels.get("bass") or 0.0)))
     for key in keys:
         center = key["x"] + key["w"] / 2
         index = min(last, int(center / span * len(bands)))
-        colors[key["led"]] = _tint(tint, 0.06 + 0.94 * bands[index])
+        amount = bands[index]
+        if center < span * 0.28:
+            amount = max(amount, bass)
+        colors[key["led"]] = _tint(tint, max(0.0, min(1.0, amount)))
     return colors
 
 
@@ -226,6 +283,7 @@ class MusicSession:
         self.capture = capture
         self.error = ""
         self.running = False
+        self.envelope = Envelope()
 
     def start(self):
         if self.running:
@@ -251,9 +309,10 @@ class MusicSession:
             return None
         if not samples:
             return None
-        return analyze(samples, self.capture.rate)
+        return self.envelope.update(analyze(samples, self.capture.rate))
 
     def stop(self):
         if self.capture is not None:
             self.capture.stop()
         self.running = False
+        self.envelope = Envelope()

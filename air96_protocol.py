@@ -40,6 +40,7 @@ VAL_COLOR = 4
 CMD_PER_KEY_PROBE = 0xA6
 CMD_PER_KEY_SET = 0xA7
 CMD_PER_KEY_CLEAR = 0xA8
+CMD_PER_KEY_MODS = 0xA9
 PER_KEY_MAGIC = b"A96K"
 PER_KEY_VERSION = 1
 PER_KEY_LEDS_PER_PACKET = 9
@@ -231,6 +232,19 @@ def per_key_clear_request():
     return packet((CMD_PER_KEY_CLEAR, *PER_KEY_MAGIC, PER_KEY_VERSION))
 
 
+def per_key_mods_request():
+    return packet((CMD_PER_KEY_MODS, *PER_KEY_MAGIC, PER_KEY_VERSION))
+
+
+def parse_per_key_mods(response):
+    """Hyprland modmask from the keyboard, or None if this firmware has no report."""
+    if len(response) < 6 or response[0] != CMD_PER_KEY_MODS:
+        return None
+    if bytes(response[1:5]) != PER_KEY_MAGIC:
+        return None
+    return response[5]
+
+
 def per_key_set_packets(colors, offset=0):
     """Build direct-color packets. ``colors`` is a list of (r, g, b).
 
@@ -245,6 +259,36 @@ def per_key_set_packets(colors, offset=0):
             values.extend((int(red) & 0xFF, int(green) & 0xFF, int(blue) & 0xFF))
         packets.append(packet(values))
         index += len(chunk)
+    return packets
+
+
+def per_key_delta_packets(previous, colors, minimum=12):
+    """Packets for LEDs that moved. An empty list means the frame is unchanged.
+
+    A full rewrite of all 100 keys is a dozen HID round trips. Sending that
+    on every music tick is what lets the 2 second overlay timer expire and
+    the normal effect flash back.
+    """
+    if previous is None or len(previous) != len(colors):
+        return per_key_set_packets(colors)
+    changed = []
+    for index, color in enumerate(colors):
+        old = previous[index]
+        if any(abs(int(channel) - int(previous_channel)) >= minimum for channel, previous_channel in zip(color, old)):
+            changed.append(index)
+    if not changed:
+        return []
+    packets = []
+    start = changed[0]
+    run = [colors[start]]
+    for index in changed[1:]:
+        if index == start + len(run) and len(run) < PER_KEY_LEDS_PER_PACKET:
+            run.append(colors[index])
+            continue
+        packets.extend(per_key_set_packets(run, offset=start))
+        start = index
+        run = [colors[index]]
+    packets.extend(per_key_set_packets(run, offset=start))
     return packets
 
 

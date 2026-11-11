@@ -21,7 +21,7 @@ class BindTests(unittest.TestCase):
         self.assertEqual({item["key"] for item in binds}, {"q", "enter", "h", "f1"})
         idle = compose_highlights(binds, held=0, color="#7aa2f7")
         self.assertEqual(idle["q"]["level"], "idle")
-        self.assertEqual(idle["enter"]["level"], "idle")
+        self.assertNotIn("enter", idle)
         self.assertNotIn("h", idle)
         self.assertNotIn("f1", idle)
 
@@ -69,10 +69,44 @@ class BindTests(unittest.TestCase):
             {"key": "q", "mods": ["ctrl"], "label": "Quit", "color": "#f7768e"},
             {"key": "t", "mods": ["ctrl"], "label": "New tab", "color": "#89b4fa"},
         ]}
-        shown = compose_highlights(binds, held=64, profile=profile, color="#ffffff")
+        shown = compose_highlights(binds, held=0, profile=profile, color="#ffffff")
         self.assertEqual(shown["q"]["source"], "bind")
         self.assertEqual(shown["t"]["source"], "profile")
         self.assertIn("ctrl", shown["t"]["label"])
+        held = compose_highlights(binds, held=64, profile=profile, color="#ffffff")
+        self.assertNotIn("t", held)
+        self.assertEqual(held["q"]["source"], "bind")
+
+    def test_omarchy_combos_follow_the_full_mask(self):
+        # Same shape as Omarchy's tiling binds: Super for an action, Super+Shift
+        # for the paired action, Super+Alt for another, and a mouse bind ignored.
+        text = """
+        bind = SUPER, W, killactive
+        bind = SUPER, J, togglesplit
+        bind = SUPER, left, movefocus, l
+        bind = SUPER SHIFT, left, swapwindow, l
+        bind = SUPER, code:10, workspace, 1
+        bind = SUPER SHIFT, code:10, movetoworkspace, 1
+        bind = SUPER ALT, code:19, workspace, 10
+        bind = SUPER SHIFT ALT, Return, exec, omarchy-menu
+        bind = SUPER, mouse:272, movewindow
+        """
+        binds = parse_bind_lines(text)
+        self.assertEqual(key_to_id("code:10"), "1")
+        self.assertEqual(key_to_id("code:19"), "0")
+        self.assertEqual(key_to_id("code:20"), "minus")
+        idle = compose_highlights(binds, held=0)
+        self.assertEqual(set(idle), {"w", "j", "left", "1"})
+        super_only = compose_highlights(binds, held=64)
+        self.assertEqual(set(super_only), {"w", "j", "left", "1"})
+        self.assertTrue(all(item["level"] == "active" for item in super_only.values()))
+        shifted = compose_highlights(binds, held=64 | 1)
+        self.assertEqual(set(shifted), {"left", "1"})
+        alt = compose_highlights(binds, held=64 | 8)
+        self.assertEqual(set(alt), {"0"})
+        both = compose_highlights(binds, held=64 | 1 | 8)
+        self.assertEqual(set(both), {"enter"})
+        self.assertEqual(compose_highlights(binds, held=64 | 4), {})
 
     def test_evdev_tracks_modifiers_and_discards_other_keys(self):
         def event(code, value):

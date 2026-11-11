@@ -1,7 +1,7 @@
 import math
 import unittest
 
-from air96_audio import analyze, frame_colors, via_pulse
+from air96_audio import Envelope, analyze, frame_colors, via_pulse
 from air96_layout import KEYS
 
 
@@ -24,11 +24,39 @@ class AudioTests(unittest.TestCase):
         right = max(KEYS, key=lambda key: key["x"] + key["w"])
         self.assertGreater(colors[left["led"]][0], 200)
         self.assertLess(colors[right["led"]][0], 40)
-        flat = frame_colors({"rms": 0.0, "bands": [1.0, 0.0]}, "vu", "#ffffff")
+        flat = frame_colors({"rms": 0.5, "bands": [1.0, 0.0]}, "vu", "#ffffff")
         lit = [color for color in flat if color != (0, 0, 0)]
         self.assertTrue(lit)
         self.assertEqual(len(set(lit)), 1)
         self.assertEqual(flat[100], (0, 0, 0))
+        dark = frame_colors({"rms": 0.0, "bands": [1.0]}, "vu", "#ffffff")
+        self.assertEqual(dark[0], (0, 0, 0))
+
+    def test_gate_decay_and_bass_pulse(self):
+        gated = Envelope()
+        noise = gated.update({"rms": 0.001, "bands": [1.0] * 16})
+        self.assertTrue(noise["silent"])
+        self.assertLess(max(noise["bands"]), 0.05)
+
+        quiet = Envelope()
+        settled = None
+        for _ in range(40):
+            settled = quiet.update({"rms": 0.04, "bands": [0.04] + [0.0] * 15})
+        self.assertGreater(settled["bands"][0], 0.4)
+
+        beat = Envelope()
+        loud = beat.update({"rms": 0.5, "bands": [0.9] + [0.0] * 15})
+        later = loud
+        for _ in range(12):
+            later = beat.update({"rms": 0.03, "bands": [0.02] + [0.0] * 15})
+        self.assertGreater(loud["bands"][0], 0.5)
+        self.assertLess(later["bands"][0], loud["bands"][0] * 0.45)
+        self.assertGreater(later["bass"], 0.0)
+
+        colors = frame_colors({"rms": 0.2, "bands": [0.05] * 16, "bass": 1.0}, "spectrum", "#ff0000")
+        left = min(KEYS, key=lambda key: key["x"])
+        right = max(KEYS, key=lambda key: key["x"] + key["w"])
+        self.assertGreater(colors[left["led"]][0], colors[right["led"]][0] + 80)
 
     def test_via_pulse_tracks_level_inside_a_byte(self):
         quiet = via_pulse({"rms": 0, "bands": [0] * 16}, "#3366ff", 200)

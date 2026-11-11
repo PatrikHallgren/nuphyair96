@@ -54,12 +54,16 @@ from air96_protocol import (
     parse_protocol_version,
     per_key_capabilities,
     per_key_clear_request,
+    per_key_delta_packets,
+    per_key_mods_request,
     per_key_probe_request,
     per_key_set_packets,
+    parse_per_key_mods,
     per_key_supported,
     protocol_version_request,
     set_keycode_request,
 )
+from air96_hid import HidError
 from air96_theme import read_theme_color
 from air96_binds import compose_highlights, held_names
 
@@ -260,6 +264,7 @@ class Backend:
         self.music_error = ""
         self.per_key_caps = None
         self.frame_kind = ""
+        self._music_frame = None
         self.last_direct = 0.0
         self._config_mtime = 0
         self._load()
@@ -583,21 +588,51 @@ class Backend:
                 raise ProtocolError("Per-key write was not acknowledged")
         self.last_direct = time.monotonic()
 
+    def read_keyboard_mods(self):
+        """Hyprland modmask from this keyboard, or None on stock / older firmware.
+
+        The keyboard already knows which modifiers are down. That is what
+        makes Super+Shift light a different set from Super alone, without a
+        second udev rule on /dev/input.
+        """
+        if not self.per_key or self.transport is None:
+            return None
+        try:
+            response = self.transport.transact(per_key_mods_request())
+        except (OSError, TimeoutError, HidError):
+            return None
+        return parse_per_key_mods(response)
+
     def push_per_key(self):
         if not self.per_key:
             raise ProtocolError(self.per_key_reason)
+        mods = self.read_keyboard_mods()
+        if mods is not None:
+            self.held = mods
         colors = [(0, 0, 0)] * LED_COUNT
         base = self.theme_color() or self.config["lighting"]["hex"]
-        red, green, blue = _scale(base, 0.15)
+        red, green, blue = _scale(base, 0.04)
         for key in KEYS:
             colors[key["led"]] = (red, green, blue)
         for ident, item in self.highlights().items():
-            key = next(entry for entry in KEYS if entry["id"] == ident)
-            scale = {"idle": 0.45, "active": 1.0, "profile": 0.85}.get(item["level"], 0.6)
+            key = next((entry for entry in KEYS if entry["id"] == ident), None)
+            if key is None:
+                continue
+            scale = {"idle": 0.55, "active": 1.0, "profile": 0.7}.get(item["level"], 0.6)
             colors[key["led"]] = _scale(item["color"], scale)
         self._write_colors(colors)
         self.frame_kind = "highlight"
         self.message = "Per-key frame sent"
+
+    def keepalive_overlay(self):
+        """Refresh the 2 second overlay timer without rewriting LEDs or clearing."""
+        if not self.per_key or self.transport is None:
+            return False
+        response = self._transact(per_key_probe_request())
+        if response[0] != 0xA6:
+            raise ProtocolError("Per-key keepalive was not acknowledged")
+        self.last_direct = time.monotonic()
+        return True
 
     def clear_per_key(self):
         if not self.per_key or self.transport is None:
@@ -607,16 +642,36 @@ class Backend:
         if not response or response[0] != CMD_PER_KEY_CLEAR:
             raise ProtocolError("Per-key clear was not acknowledged")
         self.frame_kind = ""
+        self._music_frame = None
         self.last_direct = 0.0
 
     def push_music(self, levels):
         from air96_audio import frame_colors, via_pulse
         tint = self.theme_color() or self.config["lighting"]["hex"]
         if self.per_key:
-            self._write_colors(frame_colors(levels, self.config["music"]["effect"], tint))
+            colors = frame_colors(levels, self.config["music"]["effect"], tint)
+            packets = per_key_delta_packets(self._music_frame, colors)
+            old_timeout = getattr(self.transport, "timeout", None)
+            if old_timeout is not None:
+                self.transport.timeout = min(float(old_timeout), 0.08)
+            try:
+                if packets:
+                    for payload in packets:
+                        response = self._transact(payload)
+                        if response[0] != 0xA7:
+                            raise ProtocolError("Per-key write was not acknowledged")
+                else:
+                    response = self._transact(per_key_probe_request())
+                    if response[0] != 0xA6:
+                        raise ProtocolError("Per-key keepalive was not acknowledged")
+            finally:
+                if old_timeout is not None:
+                    self.transport.timeout = old_timeout
+            self._music_frame = [tuple(color) for color in colors]
+            self.last_direct = time.monotonic()
             self.frame_kind = "music"
             self.music_error = ""
-            self.message = "Music frame sent"
+            self.message = "Music frame sent" if packets else "Music frame held"
             return
         if self.transport is None:
             raise ProtocolError("Air96 is not connected over USB")
