@@ -265,6 +265,47 @@ class ThemeWatch:
         os.close(self.fd)
 
 
+_REVISION = None
+
+
+def worker_revision():
+    global _REVISION
+    if _REVISION is None:
+        from air96_backend import checkout_revision
+        _REVISION = checkout_revision(Path(__file__).resolve().parent)
+    return _REVISION
+
+
+def publish_worker(backend, session):
+    """Heartbeat so `status` can see the process that actually drives the keys."""
+    capture = getattr(session, "capture", None)
+    levels = getattr(session, "last_levels", None) or {}
+    script = Path(__file__).resolve()
+    payload = {
+        "pid": os.getpid(),
+        "script": str(script),
+        "root": str(script.parent),
+        "revision": worker_revision(),
+        "updated": time.time(),
+        "pushConfigured": bool(backend.config["per_key"]["push_to_keyboard"]),
+        "perKey": bool(backend.per_key),
+        "musicEnabled": bool(backend.config["music"]["enabled"]),
+        "musicError": backend.music_error,
+        "musicRunning": bool(getattr(session, "running", False)),
+        "recorder": list(getattr(capture, "command", []) or []),
+        "stalled": bool(getattr(capture, "stalled", False)),
+        "bytes": int(getattr(capture, "bytes_total", 0) or 0),
+        "rms": levels.get("rms") if isinstance(levels, dict) else None,
+        "silent": levels.get("silent") if isinstance(levels, dict) else None,
+        "held": backend.held,
+    }
+    path = backend.state_dir / "worker.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
+    temporary.replace(path)
+
+
 def drive_lights(backend, session, state, now):
     """Resend highlights before the firmware timeout, and stream music frames."""
     backend.reload_if_external()
@@ -292,6 +333,8 @@ def drive_lights(backend, session, state, now):
             levels = None
         if session.error:
             backend.music_error = session.error
+        elif levels is not None:
+            backend.music_error = ""
         interval = 0.05 if backend.per_key else 0.25
         if levels is not None and now - state["last_music"] >= interval:
             try:
@@ -488,6 +531,10 @@ def serve(backend=None, stdin=None):
                 if hypr.socket is None and hypr.connect():
                     selector.register(hypr.socket, selectors.EVENT_READ, "hypr")
             drive_lights(backend, session, light_state, now)
+            try:
+                publish_worker(backend, session)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

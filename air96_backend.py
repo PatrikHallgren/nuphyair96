@@ -73,11 +73,23 @@ STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/stat
 VERIFICATION = {
     "lighting": "VIA RGB-matrix channel implemented; not run on an Air96",
     "keymap": "VIA dynamic keymap implemented; not run on an Air96",
-    "perKey": "On-screen highlights work on stock firmware. A successful 0xA6 probe pushes them to the keys. The firmware was compiled here and was not flashed.",
+    "perKey": "On-screen highlights work on stock firmware. A successful 0xA6 probe means this keyboard can take per-key colors.",
     "theme": "keyboard.rgb and colors.toml parsing is tested. Live theme switching was not run here.",
     "homeAssistant": "Light payloads are tested. No Home Assistant server was called.",
-    "modifiers": "Evdev parser is tested. Reading /dev/input needs the optional udev rule and was not run here.",
+    "modifiers": "The firmware reports the modifier mask. The evdev listener is optional and is not required for Super highlights.",
 }
+
+
+def verification_notes(per_key):
+    notes = dict(VERIFICATION)
+    if per_key is True:
+        notes["perKey"] = (
+            "This keyboard answered the per-key probe. The bar worker sends colors when push is on. "
+            "The static sentence about the firmware not being flashed was a development note, not a live check."
+        )
+    elif per_key is False:
+        notes["perKey"] = "The per-key probe was not accepted. Stock firmware leaves the matrix effect alone."
+    return notes
 
 
 def default_config():
@@ -760,7 +772,7 @@ class Backend:
             "hardware": self.hardware,
             "conflicts": self.conflicts,
             "backup": self.keymap_backup,
-            "verification": VERIFICATION,
+            "verification": verification_notes(self.per_key),
             "deviceIdentity": self.device_identity,
         }
         if include_keymap and self.keymap:
@@ -779,3 +791,159 @@ def _scale(color, scale):
     from air96_protocol import hex_to_rgb
     red, green, blue = hex_to_rgb(color)
     return tuple(max(0, min(255, round(channel * scale))) for channel in (red, green, blue))
+
+
+def checkout_revision(root):
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+            capture_output=True, timeout=2, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return (result.stdout or b"").decode("utf-8", "replace").strip()
+
+
+def running_worker_processes():
+    root = Path("/proc")
+    found = []
+    if not root.is_dir():
+        return found
+    for entry in root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        text = raw.replace(b"\0", b" ").decode("utf-8", "replace").strip()
+        if "air96_worker.py" not in text:
+            continue
+        found.append({"pid": int(entry.name), "cmdline": text})
+    return found
+
+
+def read_worker_heartbeat(state_dir, now=None):
+    path = Path(state_dir) / "worker.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    moment = time.time() if now is None else now
+    updated = float(data.get("updated") or 0)
+    data["fresh"] = moment - updated < 3
+    return data
+
+
+def describe_runtime(backend, heartbeat=None, processes=None):
+    """Plain reasons for a dark keyboard. Status prints these as well as JSON."""
+    if heartbeat is None:
+        heartbeat = read_worker_heartbeat(backend.state_dir)
+    if processes is None:
+        processes = running_worker_processes()
+    here = Path(__file__).resolve().parent
+    our_revision = checkout_revision(here)
+    lines = []
+    script = ""
+    fresh = bool(heartbeat and heartbeat.get("fresh"))
+    matches = False
+    if fresh:
+        script = str(heartbeat.get("script") or "")
+        try:
+            matches = bool(script) and Path(script).resolve().parent == here
+        except OSError:
+            matches = False
+        revision = str(heartbeat.get("revision") or "")
+        if matches and our_revision and revision and revision != our_revision:
+            matches = False
+            lines.append(
+                f"The bar worker is revision {revision} and this checkout is {our_revision}. "
+                "Run ./install.sh so the worker restarts on this code."
+            )
+        elif matches:
+            lines.append(f"The bar worker is this checkout{f' ({revision})' if revision else ''}.")
+        else:
+            lines.append(
+                f"The bar worker is {script or 'another copy'}, not this checkout. "
+                "git pull here does not update it. ./install.sh points the plugin at this checkout and restarts the worker."
+            )
+    elif processes:
+        lines.append(
+            "An air96_worker.py process is running but it is not the current plugin. "
+            f"Command: {processes[0]['cmdline']}. ./install.sh replaces a copied plugin and restarts the worker."
+        )
+    else:
+        lines.append(
+            "No bar worker is running. Super highlights and music are sent by that process. "
+            "`music on` only saves the setting. ./install.sh links the plugin; then enable it and restart the shell if the bar is not up."
+        )
+
+    push = bool(backend.config["per_key"]["push_to_keyboard"])
+    music_on = bool(backend.config["music"]["enabled"])
+    if not push:
+        lines.append(
+            "Per-key push is off in the saved config. The first plugin wrote that default, and turning the "
+            "default on later does not change the file. Nothing is sent for Super highlights. "
+            "Run: python3 air96_cli.py push on"
+        )
+    elif backend.per_key is False:
+        lines.append("This keyboard did not accept per-key colors, so individual keys are not painted.")
+    elif music_on:
+        lines.append(
+            "Music mode is on, so the visualizer owns the keys and Super highlights are not drawn. "
+            "Run: python3 air96_cli.py music off"
+        )
+    elif not fresh:
+        lines.append("Push is on in this config, but no current worker is sending frames to the keyboard.")
+    else:
+        lines.append(
+            "Super highlights use the modifier mask the keyboard reports. The optional evdev udev rule is not required."
+        )
+
+    if getattr(backend, "mods_from_keyboard", None) is True:
+        from air96_binds import held_names
+        names = "+".join(held_names(backend.held)) or "none"
+        lines.append(f"The keyboard reports modifiers: {names}.")
+    elif backend.per_key and getattr(backend, "mods_from_keyboard", None) is False:
+        lines.append(
+            "The keyboard did not answer the modifier report (0xA9). Super+Shift cannot change the highlights "
+            "until this keymap is running. The evdev rule is only a fallback."
+        )
+
+    if music_on and fresh:
+        recorder = " ".join(heartbeat.get("recorder") or [])
+        if heartbeat.get("musicError"):
+            lines.append(f"Music: {heartbeat.get('musicError')}")
+        elif heartbeat.get("stalled"):
+            lines.append("Music is on, but the recorder has stopped sending samples. The lights keep the last frame unless they are faded.")
+        else:
+            rms = heartbeat.get("rms")
+            detail = f" rms={rms:.3f}" if isinstance(rms, (int, float)) else ""
+            lines.append(f"Music is playing through the worker.{detail} Source: {recorder or 'not started'}.")
+    elif music_on:
+        lines.append("Music is saved as on. Only the bar worker opens the speaker monitor. `music on` does not play it.")
+
+    theme = backend.theme_color()
+    stored = backend.config["lighting"]["hex"]
+    if backend.config["lighting"]["follow_theme"] and theme and theme.lower() != stored.lower():
+        lines.append(
+            f"Theme follow is on, so the keyboard color is the theme {theme}. "
+            f"lighting.hex {stored} is only the stored color and is not what follow writes."
+        )
+
+    runtime = {
+        "workerMatches": matches,
+        "workerFresh": fresh,
+        "workerScript": script,
+        "revision": our_revision,
+        "push": push,
+        "music": music_on,
+    }
+    return {"lines": lines, "runtime": runtime}

@@ -472,7 +472,7 @@ Controls.ScrollView {
         Layout.fillWidth: true
         font.pixelSize: Commons.Style.font.caption
         opacity: 0.75
-        text: (root.snapshot.modifiers && root.snapshot.modifiers.permission) || "Modifier listening is off. Enable it, install the optional input udev rule, replug, then restart the shell."
+        text: (root.snapshot.modifiers && root.snapshot.modifiers.permission) || "Super highlights use the modifier mask the keyboard reports. The input udev rule is optional and is not required."
       }
       Ui.Toggle {
         Layout.fillWidth: true

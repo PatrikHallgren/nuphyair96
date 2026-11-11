@@ -86,9 +86,24 @@ def _band_edges(rate, count):
     return [low * math.exp(span * index / count) for index in range(count + 1)]
 
 
+def _hann(samples):
+    """A rectangular window leaks one tone across the whole keyboard.
+
+    That leakage is a bright-left, dark-right ramp. Auto-gain then pins the
+    bright end at full scale, so the ramp looks the same for hiss and for music.
+    """
+    count = len(samples)
+    if count < 2:
+        return list(samples)
+    scale = 2 * math.pi / (count - 1)
+    return [sample * (0.5 - 0.5 * math.cos(scale * index)) for index, sample in enumerate(samples)]
+
+
 def analyze(samples, rate=RATE, bands=BANDS):
     window = list(samples[-WINDOW:])
-    magnitudes = _fft(window) if window else []
+    level = min(1.0, rms(window))
+    shaped = _hann(window)
+    magnitudes = _fft(shaped) if shaped else []
     size = len(magnitudes) * 2 or 1
     edges = _band_edges(rate, bands)
     values = []
@@ -104,9 +119,6 @@ def analyze(samples, rate=RATE, bands=BANDS):
             energy += magnitude
             bins += 1
         values.append(energy / bins if bins else 0.0)
-    # Leave the bands in absolute units. Dividing by this frame's peak makes
-    # silence and a kick the same shape, so the lights never look like music.
-    level = min(1.0, rms(window))
     bass = sum(values[:3]) / 3 if values else 0.0
     highs = sum(values[-3:]) / 3 if values else 0.0
     return {"rms": level, "bands": values, "bass": bass, "highs": highs}
@@ -126,6 +138,7 @@ class Envelope:
         self.open_at = open_at
         self.close_at = close_at
         self.gain = 0.05
+        self.loud = 0.0
         self.open = False
         self.level = 0.0
         self.bands = [0.0] * BANDS
@@ -157,12 +170,25 @@ class Envelope:
         blended = [old * keep + new * take for old, new in zip(self.bands, target)]
         self.bands = blended
         self.level = max(blended) if blended else 0.0
+        # Shape can stay normalized. Brightness has to follow the actual level
+        # or a beat cannot get brighter than the hiss it replaced.
+        if not self.open:
+            loud_target = 0.0
+        else:
+            loud_target = min(1.0, rms_level / 0.12)
+        if loud_target >= self.loud:
+            self.loud = self.loud * 0.15 + loud_target * 0.85
+        else:
+            self.loud = self.loud * self.decay + loud_target * (1.0 - self.decay)
+        shown = [value * self.loud for value in blended]
+        silent = (not self.open) and max(shown, default=0.0) < 0.04
         return {
-            "rms": 0.0 if not self.open and self.level < 0.04 else min(1.0, max(self.level, rms_level if self.open else 0.0)),
-            "bands": blended,
-            "bass": sum(blended[:3]) / 3,
-            "highs": sum(blended[-3:]) / 3,
-            "silent": (not self.open) and self.level < 0.04,
+            "rms": 0.0 if silent else min(1.0, max(self.loud, rms_level if self.open else 0.0)),
+            "bands": shown,
+            "bass": sum(shown[:3]) / 3,
+            "highs": sum(shown[-3:]) / 3,
+            "loudness": self.loud,
+            "silent": silent,
         }
 
 
@@ -211,16 +237,47 @@ def via_pulse(levels, tint, base_brightness):
     return {"effect": 1, "brightness": brightness, "hue": hue, "sat": sat}
 
 
-def recorder_command(which=shutil.which):
-    if which("pw-record"):
-        return [
-            "pw-record", "--raw", "--rate", str(RATE), "--channels", "1",
-            "--format", "s16", "--target", "@DEFAULT_AUDIO_SINK@.monitor", "-",
-        ]
+def pipewire_monitor_target(run=subprocess.run):
+    """Node name of the default speakers' monitor, for pw-record --target.
+
+    pw-record does not treat ``@DEFAULT_AUDIO_SINK@.monitor`` as a special
+    name. Its default capture target is the microphone. pactl's sink name
+    plus ``.monitor`` is the mix actually playing through that sink.
+    """
+    try:
+        result = run(["pactl", "get-default-sink"], capture_output=True, timeout=2, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    name = (result.stdout or b"").decode("utf-8", "replace").strip()
+    if not name or any(character.isspace() for character in name) or name.startswith("@"):
+        return None
+    return name + ".monitor"
+
+
+def recorder_command(which=shutil.which, resolve_monitor=pipewire_monitor_target):
+    """Capture the default speakers, not the microphone.
+
+    ``parecord --device=@DEFAULT_MONITOR@`` is pipewire-pulse's name for the
+    monitor of the default sink. It follows headphones and speakers. pw-record
+    is only used when that command is missing, and only with a resolved
+    monitor node. ``@DEFAULT_AUDIO_SINK@.monitor`` is not a pw-record target;
+    leaving the target off records the microphone, which does not move when
+    music plays through the speakers or headphones.
+    """
     if which("parecord"):
         return [
             "parecord", "--raw", "--rate=%s" % RATE, "--channels=1",
-            "--format=s16le", "--device=@DEFAULT_SINK@.monitor",
+            "--format=s16le", "--device=@DEFAULT_MONITOR@",
+        ]
+    if which("pw-record"):
+        target = resolve_monitor() if resolve_monitor else None
+        if not target:
+            return None
+        return [
+            "pw-record", "--raw", "--rate", str(RATE), "--channels", "1",
+            "--format", "s16", "--target", target, "-",
         ]
     return None
 
@@ -233,36 +290,68 @@ class MonitorCapture:
         self._which = which
         self.proc = None
         self.rate = RATE
+        self.command = []
         self.error = ""
         self.failed = False
+        self.stalled = False
+        self.bytes_total = 0
+        self._stalls = 0
         self._raw = bytearray()
 
     def start(self):
         command = recorder_command(self._which)
         if not command:
-            raise OSError("pw-record and parecord were not found; music mode needs PipeWire or PulseAudio")
+            raise OSError(
+                "Could not open the speaker monitor. parecord is missing, and pw-record "
+                "needs the default sink from pactl. Refusing to record the microphone."
+            )
+        self.command = list(command)
         self.proc = self._popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         os.set_blocking(self.proc.stdout.fileno(), False)
+        if self.proc.stderr is not None:
+            os.set_blocking(self.proc.stderr.fileno(), False)
+
+    def _drain(self, stream):
+        if stream is None:
+            return b""
+        chunks = []
+        while True:
+            try:
+                chunk = os.read(stream.fileno(), 65536)
+            except BlockingIOError:
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     def read_samples(self):
         if self.proc is None or self.failed:
             return None
+        note = self._drain(self.proc.stderr).decode("utf-8", "replace").strip()
         if self.proc.poll() is not None:
-            err = b""
-            if self.proc.stderr is not None:
-                err = self.proc.stderr.read() or b""
             self.failed = True
-            self.error = (err.decode("utf-8", "replace").strip() or "Audio recorder exited")[:300]
+            self.stalled = True
+            self.error = (note or self.error or "Audio recorder exited")[:300]
             return None
-        try:
-            chunk = os.read(self.proc.stdout.fileno(), 8192)
-        except BlockingIOError:
-            chunk = b""
+        chunk = self._drain(self.proc.stdout)
         if chunk:
+            self.bytes_total += len(chunk)
             self._raw.extend(chunk)
+            self._stalls = 0
+            self.stalled = False
+            # A live monitor is not an error. A recorder banner on stderr must
+            # not stick, or status reports a failure while audio is flowing.
+            self.error = ""
+        else:
+            self._stalls += 1
+            # About half a second at the worker's poll rate. The last window
+            # is then a frozen spectrum, which is what a keepalive would hold
+            # on the keys. Drop it so the lights can decay.
+            self.stalled = self._stalls >= 8
         if len(self._raw) > self.rate * 2:
             self._raw = self._raw[-self.rate * 2:]
-        if len(self._raw) < WINDOW * 2:
+        if self.stalled or len(self._raw) < WINDOW * 2:
             return None
         return pcm_s16le(bytes(self._raw[-(WINDOW * 2):]))
 
@@ -284,6 +373,7 @@ class MusicSession:
         self.error = ""
         self.running = False
         self.envelope = Envelope()
+        self.last_levels = None
 
     def start(self):
         if self.running:
@@ -306,10 +396,21 @@ class MusicSession:
         if self.capture.failed:
             self.error = self.capture.error
             self.running = False
-            return None
+            self.last_levels = self.envelope.update({"rms": 0.0, "bands": [0.0] * BANDS})
+            return self.last_levels
+        if self.capture.stalled:
+            self.error = self.capture.error or (
+                "The recorder stopped sending samples. The last window is not live audio, so the lights are fading."
+            )
+            self.last_levels = self.envelope.update({"rms": 0.0, "bands": [0.0] * BANDS})
+            return self.last_levels
         if not samples:
+            self.last_levels = None
             return None
-        return self.envelope.update(analyze(samples, self.capture.rate))
+        if not self.capture.error:
+            self.error = ""
+        self.last_levels = self.envelope.update(analyze(samples, self.capture.rate))
+        return self.last_levels
 
     def stop(self):
         if self.capture is not None:

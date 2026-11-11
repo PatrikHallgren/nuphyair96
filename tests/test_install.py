@@ -61,7 +61,7 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(recorded.exists())
         self.assertIn("Kept", removed.stdout)
 
-    def test_plugin_link_and_a_real_plugin_directory_is_left_alone(self):
+    def test_plugin_link_replaces_a_copied_plugin_directory(self):
         self.run_install("--plugin")
         link = self.home / ".config/omarchy/plugins/local.nuphy-air96"
         self.assertTrue(link.is_symlink())
@@ -73,11 +73,15 @@ class InstallTests(unittest.TestCase):
         plugin = self.home / ".config/omarchy/plugins/local.nuphy-air96"
         plugin.mkdir(parents=True)
         (plugin / "air96_cli.py").write_text("# real clone\n")
-        self.run_install("--plugin")
-        self.assertFalse(plugin.is_symlink())
-        self.assertTrue((plugin / "air96_cli.py").is_file())
+        replaced = self.run_install("--plugin")
+        self.assertTrue(plugin.is_symlink())
+        self.assertEqual(plugin.resolve(), ROOT.resolve())
+        backup = self.home / ".config/omarchy/plugins/local.nuphy-air96.previous"
+        self.assertEqual((backup / "air96_cli.py").read_text(), "# real clone\n")
+        self.assertIn("Replaced the separate plugin copy", replaced.stdout)
         self.run_install("--uninstall")
-        self.assertTrue(plugin.is_dir())
+        self.assertFalse(plugin.exists())
+        self.assertTrue(backup.is_dir())
 
     def test_hook_runs_sync_from_the_recorded_cli_without_a_plugin(self):
         log = Path(self.temp.name) / "log"

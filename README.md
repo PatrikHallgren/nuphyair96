@@ -23,14 +23,14 @@ python3 air96_cli.py apply --follow on
 
 The next theme change runs `air96_cli.py sync` from this checkout. `sync` does nothing until follow is on. The hook does not need the bar plugin.
 
-Bar plugin as well. `./install.sh` with no arguments also links this checkout to `~/.config/omarchy/plugins/local.nuphy-air96`:
+Bar plugin as well. `./install.sh` with no arguments links this checkout to `~/.config/omarchy/plugins/local.nuphy-air96`, restarts the bar worker, and turns per-key push on:
 
 ```sh
 ./install.sh
 omarchy plugin enable local.nuphy-air96
 ```
 
-Restart the shell after enabling. The bar icon target is `omarchy-shell air96 toggle`.
+If Omarchy had copied the plugin into that directory, the copy is moved to `local.nuphy-air96.previous` and replaced with the link. `git pull` in this checkout is then what the bar runs. Restart the shell after enabling so Quickshell reloads the panel. The bar icon target is `omarchy-shell air96 toggle`.
 
 From Omarchy, without a separate checkout:
 
@@ -40,7 +40,7 @@ omarchy plugin add https://github.com/PatrikHallgren/nuphyair96 --enable --yes
 python3 ~/.config/omarchy/plugins/local.nuphy-air96/air96_cli.py apply --follow on
 ```
 
-Remove the hook, the recorded CLI path, and a plugin symlink this script created. A plugin directory Omarchy cloned, and `config.json`, stay:
+Remove the hook, the recorded CLI path, and a plugin symlink this script created. A leftover `.previous` copy, and `config.json`, stay:
 
 ```sh
 ./install.sh --uninstall
@@ -156,7 +156,15 @@ With no modifier held, keys whose bind is exactly Super in the current submap ar
 
 The flashed keymap reports that mask (command `0xA9`) from the keys you are holding on the Air96. Super+Shift, Super+Ctrl, Super+Alt, and Super+Shift+Alt each light their own set. Hyprland's socket does not report modifiers, and the keyboard no longer paints every basic key while Super is down. That old mask is why most of the board used to light up, and why adding Shift changed nothing. Reflash the image from this change to get both.
 
-An optional evdev listener is still off by default. It reads the 64-bit `input_event` (24 bytes), keeps Shift, Ctrl, Alt, and Super, and drops every other key without logging it. It does not grab the device. Turning the switch on does not open the event node until the shell restarts. On this firmware the keyboard report is used when it answers, so the udev rule is only needed for an older image.
+The flashed keymap reports the modifier mask itself. Super, Super+Shift, Super+Ctrl, Super+Alt, and Super+Shift+Alt each light their own binds. That does not need the evdev udev rule. `python3 air96_cli.py status` says so, and it says if push is off or music is using the keys instead.
+
+Push has to be on. The first plugin saved `per_key.push_to_keyboard` as false, and a later default of true does not rewrite that file. `./install.sh` turns it on. So does:
+
+```sh
+python3 air96_cli.py push on
+```
+
+An optional evdev listener is still off by default. It reads the 64-bit `input_event` (24 bytes), keeps Shift, Ctrl, Alt, and Super, and drops every other key without logging it. It does not grab the device. It is only a fallback when the keyboard does not answer the modifier report.
 
 Install the second udev rule only if you want that:
 
@@ -208,7 +216,17 @@ python3 air96_cli.py music on --effect vu
 
 `spectrum` paints columns across the keyboard. `vu` uses one level for every key. Colors are tinted by the theme accent, or by the configured hex color when theme follow is off. The bar plugin has to be running; the command only saves the setting.
 
-Audio is the PipeWire or PulseAudio monitor (`pw-record`, or `parecord` if that is what the system has). No extra Python packages. On the Omarchy keymap the frames use the per-key protocol. A beat rises quickly and falls slowly, silence under the noise gate stays dark, and a slow gain follower keeps a quiet song visible without stretching every frame to full scale. A bass hit lifts the left columns. Only LEDs that actually changed are written. An unchanged frame sends a probe, which refreshes the 2 second overlay timer. The clear command (`0xA8`) is not sent between frames; a gap longer than that timer, or a clear, is what flashes the normal effect back. On stock firmware the worker pulses global brightness and hue through VIA about four times a second and does not write those pulses to EEPROM. Stopping music restores the saved effect.
+Audio is the monitor of the default speakers, not the microphone. `parecord --device=@DEFAULT_MONITOR@` is used when it exists, because that name follows the sink you are actually hearing. `pw-record` is only the fallback, and only after `pactl get-default-sink` names the `.monitor` node. `pw-record` does not understand `@DEFAULT_AUDIO_SINK@.monitor`; with no real target it records the microphone, which stays a steady hiss while music plays through headphones.
+
+No extra Python packages. On the Omarchy keymap the frames use the per-key protocol. A Hann window keeps a tone in one area of the keyboard instead of leaking it into a left-to-right ramp. Brightness follows the level, so a beat gets brighter and silence under the noise gate goes dark. A bass hit lifts the left columns. Only LEDs that actually changed are written. An unchanged live frame sends a probe, which refreshes the 2 second overlay timer. If the recorder stops sending samples, the last window is dropped and the lights fade instead of sitting on that frame. The clear command (`0xA8`) is not sent between frames. On stock firmware the worker pulses global brightness and hue through VIA about four times a second and does not write those pulses to EEPROM. Stopping music restores the saved effect.
+
+`music on` only saves the setting. The bar worker plays it. To watch the levels in this terminal:
+
+```sh
+python3 air96_cli.py music run --debug
+```
+
+That prints rms, bass, and whether a frame was sent. Ctrl-C restores the previous effect. Silence should go dark. Start playback and the numbers should move. If they stay at zero, the monitor is not the device you are hearing.
 
 The visualizer idea, the decay, and the 9-LED batch layout come from [ravila4/nuphy-rgb-music](https://github.com/ravila4/nuphy-rgb-music) by Ricardo Avila, MIT. That project targets the Air75 V2 at about 30 frames a second. This board's HID path sends the LEDs that moved instead of a full frame every tick. The capture and FFT here are separate, and the command bytes stay the Air96 probe.
 
@@ -229,10 +247,10 @@ Use the USB cable.
 3. `./install.sh --no-plugin`, then `apply --follow on`, then switch themes, including Tokyo Night (`keyboard.rgb` is `ff00ff` with no hash). The keyboard should change without running the command again. Without that hook, follow only applies when you run it yourself.
 4. Read the keymap, change one Windows-layer key, Apply, and confirm it. Change that key in VIA or on another host, then Apply the old draft: the plugin should refuse and leave the new value in place.
 5. Point Home Assistant at one `light.*` entity and confirm an already-on light follows a successful color write without changing brightness. An off light stays off. Confirm `status` does not print the token.
-6. Open the Binds tab. After the reflash below, hold Super, then Super+Shift, then Super+Shift+Alt. Each combination should light a different, smaller set, clearly brighter than the other keys. The optional modifier udev rule is only for an older image.
+6. `./install.sh`, then `python3 air96_cli.py status`. The diagnosis should say the worker is this checkout and push is on. Hold Super, then Super+Shift, then Super+Shift+Alt. Each combination should light a different, smaller set. Turn music off first if it is using the keys. The modifier udev rule is not required.
 7. Focus Firefox, then a terminal. Firefox keys should appear only on Firefox. On stock firmware the per-key probe should fail and the physical backlight should stay on the VIA effect.
 8. After flashing the Omarchy keymap, `status` should show `perKey.supported` true. Turn on push if it is off. Super binds should appear on the keys, and killing the bar plugin should return the normal effect within about two seconds. Fn readable lights should still show while Fn is held.
-9. Turn music on with something playing. A beat should brighten and then fall off, and silence should stay dark instead of flickering back to the normal effect. Turn it off and the previous effect should come back. On a stock board, the same switch should only pulse the global color.
+9. `python3 air96_cli.py music run --debug` with nothing playing should go dark. Start music and rms should move, and the keys with it. `music off` restores the previous effect. On a stock board, the same switch should only pulse the global color.
 
 The QML panel was not launched here. If the bar icon fails to load, the Python CLI still applies lighting and syncs the theme.
 
