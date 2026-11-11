@@ -26,7 +26,7 @@ No Air96, no Omarchy install, and no Quickshell were available in the environmen
 - Hyprland socket2 `activewindow` and `submap` events.
 - Home Assistant HTTP POST.
 - Evdev open on a real event node. The 24-byte `input_event` layout is the 64-bit one Omarchy uses. A 32-bit kernel is not parsed.
-- The bar panel. It follows the Omarchy Quickshell widgets used by the reference plugin, but this repo was not opened in Quickshell.
+- The bar panel. The widget host follows the clock bar widget (`BarWidget`, its own `ShellIpc` target, panel loaded by URL). This repo was not opened in Quickshell.
 
 ## Not available on stock firmware
 
