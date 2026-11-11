@@ -292,7 +292,7 @@ def drive_lights(backend, session, state, now):
             levels = None
         if session.error:
             backend.music_error = session.error
-        interval = 0.1 if backend.per_key else 0.25
+        interval = 0.05 if backend.per_key else 0.25
         if levels is not None and now - state["last_music"] >= interval:
             try:
                 with file_lock(backend.state_dir):
@@ -300,6 +300,14 @@ def drive_lights(backend, session, state, now):
             except (ProtocolError, OSError, HidError, TimeoutError) as exc:
                 backend.music_error = str(exc)[:300]
             state["last_music"] = now
+        elif pushing and levels is None and now - backend.last_direct >= 0.4:
+            # Not enough PCM yet. A probe holds the overlay. A gap longer than
+            # 2 seconds, or a clear (0xA8), is what flashes the normal effect back.
+            try:
+                with file_lock(backend.state_dir):
+                    backend.keepalive_overlay()
+            except (ProtocolError, OSError, HidError, TimeoutError) as exc:
+                backend.music_error = str(exc)[:300]
         state["push"] = pushing
         return
     if state["music"]:
@@ -321,7 +329,18 @@ def drive_lights(backend, session, state, now):
         except (ProtocolError, OSError, HidError, TimeoutError) as exc:
             backend.error = str(exc)[:300]
     state["push"] = pushing
-    if pushing and now - backend.last_direct >= 0.9:
+    pushed = False
+    if pushing and now - state.get("last_mods", 0) >= 0.08:
+        state["last_mods"] = now
+        mods = backend.read_keyboard_mods()
+        if mods is not None and mods != backend.held:
+            try:
+                with file_lock(backend.state_dir):
+                    backend.push_per_key()
+                pushed = True
+            except (ProtocolError, OSError, HidError, TimeoutError) as exc:
+                backend.error = str(exc)[:300]
+    if pushing and not pushed and now - backend.last_direct >= 0.9:
         try:
             with file_lock(backend.state_dir):
                 backend.push_per_key()
@@ -384,7 +403,7 @@ def serve(backend=None, stdin=None):
         while True:
             timeout = 1.0
             if backend.config["music"]["enabled"]:
-                timeout = 0.1
+                timeout = 0.05
             elif backend.config["per_key"]["push_to_keyboard"] and backend.per_key:
                 timeout = 0.5
             if deadline is not None:

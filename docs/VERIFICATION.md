@@ -9,7 +9,7 @@ No Air96, no Omarchy install, and no Quickshell were available in the environmen
 | Area | What the tests do |
 | --- | --- |
 | Theme | `colors.toml` accent, comments, quotes, and `keyboard.rgb` with or without `#`. A bare `ff00ff` wins over the accent. |
-| Binds | `hyprctl binds -j` and `bind` / `bindd` lines, XKB `code:` keys, submaps, idle Super keys versus a held mask. Evdev bytes update only Shift, Ctrl, Alt, and Super. |
+| Binds | `hyprctl binds -j` and `bind` / `bindd` lines, XKB `code:` keys, submaps. Idle lights exact Super binds only. Super, Super+Shift, Super+Alt, and Super+Shift+Alt each select a different set. Evdev bytes update only Shift, Ctrl, Alt, and Super. The keymap reports the same mask on `0xA9` and does not paint every basic key while Super is held. |
 | Profiles | Shipped Firefox, Code, and Minecraft matches. A user file with the same id overrides. VS Code import keeps the first chord. |
 | Home Assistant | `light.turn_on` sends `rgb_color` and omits brightness unless `sync_brightness` is on. `only_when_on` reads `GET /api/states/<entity>` and skips lights that are not on. Token resolution strips paste markers. Missing, malformed, and unreadable tokens are different errors, and the token text is not in the message or the body. |
 | Protocol | 100 keys, LED indexes, VIA lighting packets, HSV, keymap offsets, the per-key probe, the 9-LED packet split, clear, and the timeout model. A model of QMK's `raw_hid_receive` answers the version query unless the keymap claims the packet without sending. |

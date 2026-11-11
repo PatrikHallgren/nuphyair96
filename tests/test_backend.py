@@ -6,6 +6,7 @@ from unittest.mock import patch
 from support import BackendCase
 from air96_audio import analyze
 from air96_backend import validate_config
+from air96_layout import KEYS
 from air96_worker import execute
 
 
@@ -132,6 +133,49 @@ class BackendTests(BackendCase):
         self.assertEqual(self.backend.snapshot()["perKey"]["timeoutMs"], 2000)
         self.backend.clear_per_key()
         self.assertEqual(self.backend.frame_kind, "")
+
+    def test_super_shift_lights_a_different_key_and_stays_brighter(self):
+        self.connect(per_key=True)
+        self.backend.binds = [
+            {"key": "q", "modmask": 64, "submap": "", "label": "Close", "dispatcher": "killactive", "arg": ""},
+            {"key": "enter", "modmask": 65, "submap": "", "label": "Terminal", "dispatcher": "exec", "arg": ""},
+            {"key": "a", "modmask": 64 | 1 | 8, "submap": "", "label": "Menu", "dispatcher": "exec", "arg": ""},
+        ]
+        self.keyboard.hypr_mods = 64
+        self.backend.push_per_key()
+        self.assertEqual(self.backend.held, 64)
+        q = next(key for key in KEYS if key["id"] == "q")
+        enter = next(key for key in KEYS if key["id"] == "enter")
+        other = next(key for key in KEYS if key["id"] == "z")
+        self.assertGreater(self.keyboard.colors[q["led"]][2], self.keyboard.colors[other["led"]][2] + 80)
+        self.assertLess(self.keyboard.colors[enter["led"]][2], self.keyboard.colors[other["led"]][2] + 20)
+
+        self.keyboard.hypr_mods = 64 | 1
+        self.backend.push_per_key()
+        self.assertEqual(self.backend.held, 65)
+        self.assertGreater(self.keyboard.colors[enter["led"]][2], self.keyboard.colors[q["led"]][2] + 80)
+
+        self.keyboard.hypr_mods = 64 | 1 | 8
+        self.backend.push_per_key()
+        a = next(key for key in KEYS if key["id"] == "a")
+        self.assertEqual(self.backend.held, 64 | 1 | 8)
+        self.assertGreater(self.keyboard.colors[a["led"]][2], self.keyboard.colors[q["led"]][2] + 80)
+        self.assertGreater(self.keyboard.colors[a["led"]][2], self.keyboard.colors[enter["led"]][2] + 80)
+
+    def test_music_deltas_do_not_clear_the_overlay(self):
+        self.connect(per_key=True)
+        loud = {"rms": 0.8, "bands": [1.0] + [0.0] * 15, "bass": 1.0, "highs": 0.0}
+        self.backend.push_music(loud)
+        first = len(self.keyboard.frames)
+        self.assertGreaterEqual(first, 2)
+        self.assertNotIn(0xA8, self.keyboard.commands)
+        self.keyboard.frames.clear()
+        self.backend.push_music(loud)
+        self.assertEqual(self.keyboard.frames, [])
+        self.assertEqual(self.keyboard.commands[-1], 0xA6)
+        self.backend.push_music({"rms": 0.0, "bands": [0.0] * 16, "bass": 0.0, "highs": 0.0})
+        self.assertNotIn(0xA8, self.keyboard.commands)
+        self.assertGreater(len(self.keyboard.frames), 0)
 
     def test_stock_music_pulse_is_not_saved(self):
         self.connect(per_key=False)

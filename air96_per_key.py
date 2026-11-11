@@ -9,9 +9,29 @@ KEY_LEDS = 100
 TIMEOUT_MS = 2000
 LEDS_PER_PACKET = 9
 FLAG_TIMEOUT = 0x01
-FLAG_SUPER = 0x02
+FLAG_SUPER = 0x02  # no longer reported; the keymap does not paint a Super mask
 FLAG_CLEAR = 0x04
-FLAGS = FLAG_TIMEOUT | FLAG_SUPER | FLAG_CLEAR
+FLAGS = FLAG_TIMEOUT | FLAG_CLEAR
+
+# QMK modifier masks: left|right for shift, ctrl, alt, gui.
+MOD_MASK_SHIFT = 0x22
+MOD_MASK_CTRL = 0x11
+MOD_MASK_ALT = 0x44
+MOD_MASK_GUI = 0x88
+
+
+def hypr_modmask(mods):
+    """Same mapping as hypr_modmask() in the keymap."""
+    mask = 0
+    if mods & MOD_MASK_SHIFT:
+        mask |= 1
+    if mods & MOD_MASK_CTRL:
+        mask |= 4
+    if mods & MOD_MASK_ALT:
+        mask |= 8
+    if mods & MOD_MASK_GUI:
+        mask |= 64
+    return mask
 
 
 class PerKeyController:
@@ -21,6 +41,7 @@ class PerKeyController:
         self.now = 0
         self.deadline = 0
         self.usb = True
+        self.qmk_mods = 0
 
     def advance(self, ms):
         self.now += ms
@@ -50,12 +71,14 @@ class PerKeyController:
             return self._clear(data)
         if command == 0xA7:
             return self._set(data)
+        if command == 0xA9:
+            return self._mods(data)
         data[0] = 0xFF
         return bytes(data)
 
     def via_command_kb(self, data):
         """The Omarchy keymap hook. True means raw_hid_send already ran."""
-        if len(data) < 6 or data[0] not in (0xA6, 0xA7, 0xA8):
+        if len(data) < 6 or data[0] not in (0xA6, 0xA7, 0xA8, 0xA9):
             return False
         reply = bytearray(self.handle(bytes(data)))
         if reply[0] == 0xFF:
@@ -127,4 +150,13 @@ class PerKeyController:
         else:
             self.active = False
         data[0] = 0xA7
+        return bytes(data)
+
+    def _mods(self, data):
+        if bytes(data[1:5]) != b"A96K":
+            data[0] = 0xFF
+            return bytes(data)
+        data[0] = 0xA9
+        data[5] = hypr_modmask(self.qmk_mods)
+        data[6] = self.qmk_mods & 0xFF
         return bytes(data)

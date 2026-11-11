@@ -7,9 +7,12 @@ from air96_protocol import (
     VAL_EFFECT,
     per_key_capabilities,
     per_key_clear_request,
+    per_key_delta_packets,
+    per_key_mods_request,
     per_key_probe_request,
     per_key_set_packets,
     per_key_supported,
+    parse_per_key_mods,
 )
 from support import ROOT
 
@@ -21,11 +24,16 @@ class PerKeyTests(unittest.TestCase):
         self.assertIn("#define AIR96_CMD_PROBE 0xA6", header)
         self.assertIn("#define AIR96_CMD_SET 0xA7", header)
         self.assertIn("#define AIR96_CMD_CLEAR 0xA8", header)
+        self.assertIn("#define AIR96_CMD_MODS 0xA9", header)
         self.assertIn("#define AIR96_PER_KEY_TIMEOUT_MS 2000", header)
         self.assertIn("bool via_command_kb", source)
         self.assertNotIn("void via_command_kb", source)
         self.assertIn("raw_hid_send(data, length)", source)
         self.assertIn("return false;", source)
+        self.assertIn("hypr_modmask", source)
+        self.assertIn("MOD_MASK_GUI", source)
+        self.assertNotIn("paint_super", source)
+        self.assertNotIn("basic_key", source)
 
     def test_qmk_sends_via_replies_unless_the_keymap_claims_them(self):
         board = PerKeyController()
@@ -100,6 +108,32 @@ class PerKeyTests(unittest.TestCase):
         self.assertEqual(board.handle(packet)[0], 0xA7)
         self.assertEqual(board.colors, [(0, 0, 0)] * 100)
         self.assertTrue(board.active)
+
+    def test_modifier_report_matches_hyprland_bits(self):
+        board = PerKeyController()
+        board.qmk_mods = 0x88 | 0x02  # left GUI + left Shift
+        reply = board.exchange(per_key_mods_request())
+        self.assertEqual(reply[0], 0xA9)
+        self.assertEqual(parse_per_key_mods(reply), 64 | 1)
+        board.qmk_mods = 0x88 | 0x02 | 0x44  # + Alt
+        self.assertEqual(parse_per_key_mods(board.exchange(per_key_mods_request())), 64 | 1 | 8)
+        board.qmk_mods = 0x11  # Ctrl only
+        self.assertEqual(parse_per_key_mods(board.exchange(per_key_mods_request())), 4)
+        bad = bytearray(per_key_mods_request())
+        bad[1] = 0
+        self.assertIsNone(parse_per_key_mods(board.exchange(bad)))
+
+    def test_unchanged_music_frame_sends_no_led_packets(self):
+        colors = [(0, 0, 0)] * 100
+        self.assertEqual(per_key_delta_packets(colors, colors), [])
+        moved = list(colors)
+        moved[4] = (0, 0, 40)
+        moved[5] = (0, 0, 4)  # under the change threshold
+        packets = per_key_delta_packets(colors, moved)
+        self.assertEqual(len(packets), 1)
+        self.assertEqual(packets[0][1], 4)
+        self.assertEqual(packets[0][2], 1)
+        self.assertEqual(packets[0][3:6], bytes((0, 0, 40)))
 
 
 if __name__ == "__main__":

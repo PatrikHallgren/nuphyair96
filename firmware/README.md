@@ -6,19 +6,20 @@ The keymap is GPL-2.0-or-later because it is built with QMK and includes NuPhy's
 
 ## What the host can do
 
-Raw HID, 32-byte reports, no report id, same usage page as VIA (`FF60` / `61`). VIA commands are unchanged. This keymap's `via_command_kb` returns false for them so QMK calls `raw_hid_send`. It returns true only for `0xA6` / `0xA7` / `0xA8`, and only after it has sent the reply. A `void` hook still links over QMK's weak `bool` function and then drops every reply, which is why `status` timed out on the first flashed build.
+Raw HID, 32-byte reports, no report id, same usage page as VIA (`FF60` / `61`). VIA commands are unchanged. This keymap's `via_command_kb` returns false for them so QMK calls `raw_hid_send`. It returns true only for `0xA6` / `0xA7` / `0xA8` / `0xA9`, and only after it has sent the reply. A `void` hook still links over QMK's weak `bool` function and then drops every reply, which is why `status` timed out on the first flashed build.
 
 | Command | Bytes | Result |
 | --- | --- | --- |
 | Probe `0xA6` | `A96K`, version `1` | Echoes the magic and version, then 100 paintable LEDs, 9 LEDs per packet, flags, and timeout `2000` ms |
 | Set `0xA7` | index, count 1–9, RGB triples | One packet paints one key when count is 1, or a batch of up to 9. Indexes 100–109 are acknowledged and left to the side strips |
 | Clear `0xA8` | `A96K` | Drops the overlay and returns to the normal matrix effect. Nothing is written to EEPROM |
+| Mods `0xA9` | `A96K` | Byte 5 is the Hyprland modmask: shift 1, ctrl 4, alt 8, super 64. Byte 6 is the raw QMK modifier byte |
 
-A probe with version byte `0` also clears. A probe while the overlay is already up refreshes the 2 second timer. If the host stops sending for 2 seconds, or the link leaves USB (unplug, suspend, Bluetooth, or the dongle), the overlay drops. The plugin resends the current highlight about once a second so a still image stays up.
+A probe with version byte `0` also clears. A probe while the overlay is already up refreshes the 2 second timer without changing the picture. If the host stops sending for 2 seconds, or the link leaves USB (unplug, suspend, Bluetooth, or the dongle), the overlay drops. The plugin resends the current highlight about once a second so a still image stays up. Music sends a probe when the picture has not moved, so a quiet passage does not drop the overlay. Clear is only used when music or the overlay is turned off.
 
-Holding Super (the GUI modifier), while the host overlay is off, lights the basic keys on the Mac or Windows base layer. Fn and the M layer keep the readable-light colors from ablasik's firmware. That fallback needs no host.
+The keymap does not light keys on its own when Super is held. An earlier image painted every basic key (A through the key before Left Ctrl) whenever the GUI modifier was down, and it ignored Shift, Ctrl, and Alt. The host now reads `0xA9` and lights only the Hyprland binds for the modifiers that are actually down. Fn readable lights from ablasik's firmware are unchanged.
 
-USB only. Bluetooth and the 2.4G dongle do not expose this raw HID interface. The Super fallback still runs on the keyboard itself.
+USB only. Bluetooth and the 2.4G dongle do not expose this raw HID interface.
 
 The build rewrites the USB product id from ablasik's `0x3265` to `0x3266`, which is the id on current official 2.1.5 boards. The bootloader stays `0483:DF11`.
 

@@ -25,12 +25,16 @@ class FakeKeyboard:
         self.layers = 8
         self.per_key = per_key
         self.frames = []
+        self.commands = []
+        self.hypr_mods = 0
+        self.colors = [(0, 0, 0)] * 110
         self.blob = bytearray(self.layers * MATRIX_ROWS * MATRIX_COLS * 2)
         self.blob[1] = 0x04  # layer 0, row 0, col 0 = KC_A
 
     def transact(self, payload):
         data = bytearray(payload)
         command = data[0]
+        self.commands.append(command)
         if command == 0x01:
             data[1] = 0x00
             data[2] = 0x0C
@@ -78,7 +82,7 @@ class FakeKeyboard:
                 data[5] = 1
                 data[6] = 100
                 data[7] = 9
-                data[8] = 0x07
+                data[8] = 0x05
                 data[9] = (2000 >> 8) & 0xFF
                 data[10] = 2000 & 0xFF
             else:
@@ -86,11 +90,24 @@ class FakeKeyboard:
         elif command == 0xA7:
             if self.per_key:
                 self.frames.append(bytes(data))
+                offset = data[1]
+                count = data[2]
+                for index in range(count):
+                    led = offset + index
+                    base = 3 + index * 3
+                    if led < len(self.colors) and base + 2 < len(data):
+                        self.colors[led] = (data[base], data[base + 1], data[base + 2])
             else:
                 data[0] = 0xFF
         elif command == 0xA8:
             if self.per_key and bytes(data[1:5]) == b"A96K":
                 data[0] = 0xA8
+            else:
+                data[0] = 0xFF
+        elif command == 0xA9:
+            if self.per_key and bytes(data[1:5]) == b"A96K":
+                data[0] = 0xA9
+                data[5] = self.hypr_mods & 0xFF
             else:
                 data[0] = 0xFF
         else:

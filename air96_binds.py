@@ -51,6 +51,8 @@ CODE_KEYS = {
     23: "tab",
     **_LETTER_CODES,
     **{10 + i: str((i + 1) % 10) for i in range(10)},
+    20: "minus",
+    21: "equal",
 }
 
 ALIASES = {
@@ -229,7 +231,8 @@ def parse_bind_lines(text):
 def compose_highlights(binds, held=0, submap="", profile=None, color="#ffffff"):
     """Pick diagram keys to light.
 
-    ``held`` 0: dim every key used in a SUPER bind on this submap.
+    ``held`` 0: dim keys whose bind is exactly SUPER, not every bind that
+    merely includes SUPER. Super+Shift stays dark until Shift is held.
     ``held`` nonzero: bright only the keys that complete that exact mask.
     Profile keys are hints for the focused app. An active Hyprland bind on
     the same key wins, because that bind is what the compositor will run.
@@ -242,7 +245,7 @@ def compose_highlights(binds, held=0, submap="", profile=None, color="#ffffff"):
             continue
         mask = effective_mask(bind.get("modmask") or 0)
         if held_mask == 0:
-            if not mask & SUPER:
+            if mask != SUPER:
                 continue
             level = "idle"
         elif mask == held_mask and mask != 0:
@@ -255,13 +258,13 @@ def compose_highlights(binds, held=0, submap="", profile=None, color="#ffffff"):
             "color": color or "#ffffff",
             "source": "bind",
         }
-    if profile:
+    if profile and held_mask == 0:
         for entry in profile.get("keys") or []:
             ident = entry.get("key")
             if ident not in KEY_IDS:
                 continue
             existing = chosen.get(ident)
-            if existing and existing["level"] == "active":
+            if existing:
                 continue
             mods = entry.get("mods") or []
             label = entry.get("label") or profile.get("name") or ""
