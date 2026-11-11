@@ -1,0 +1,18 @@
+#!/bin/sh
+# Omarchy theme-set hook. Copy to ~/.config/omarchy/hooks/theme-set.d/50-air96-sync
+# The hook runs after the theme is current. sync is a no-op unless theme follow is on.
+set -eu
+plugin="${AIR96_PLUGIN:-}"
+if [ -z "$plugin" ]; then
+  for candidate in "$HOME/.config/omarchy/plugins/"*/air96_cli.py; do
+    if [ -f "$candidate" ]; then
+      plugin=$(dirname "$candidate")
+      break
+    fi
+  done
+fi
+if [ -z "$plugin" ] || [ ! -f "$plugin/air96_cli.py" ]; then
+  echo "Air96 plugin not found under ~/.config/omarchy/plugins" >&2
+  exit 0
+fi
+exec python3 "$plugin/air96_cli.py" sync

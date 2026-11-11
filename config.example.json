@@ -1,0 +1,28 @@
+{
+  "lighting": {
+    "effect": 1,
+    "brightness": 180,
+    "speed": 128,
+    "hex": "#ffffff",
+    "follow_theme": false,
+    "solid_when_following": true
+  },
+  "home_assistant": {
+    "enabled": false,
+    "url": "http://homeassistant.local:8123",
+    "token_env": "HA_TOKEN",
+    "token_file": "",
+    "token": "",
+    "entities": ["light.desk"]
+  },
+  "modifiers": {
+    "enabled": false
+  },
+  "per_key": {
+    "enabled": true,
+    "push_to_keyboard": false
+  },
+  "profiles": {
+    "enabled": true
+  }
+}
