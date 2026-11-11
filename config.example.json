@@ -4,7 +4,7 @@
     "brightness": 180,
     "speed": 128,
     "hex": "#ffffff",
-    "follow_theme": false,
+    "follow_theme": true,
     "solid_when_following": true
   },
   "home_assistant": {
@@ -13,22 +13,15 @@
     "token_env": "HA_TOKEN",
     "token_file": "",
     "token": "",
-    "entities": ["light.desk"],
+    "entities": ["light.floor_lamp_66fa"],
+    "hex": "#ffffff",
+    "brightness": 180,
+    "follow_theme": true,
     "sync_brightness": false,
     "only_when_on": true
   },
-  "modifiers": {
-    "enabled": false
-  },
-  "per_key": {
-    "enabled": true,
-    "push_to_keyboard": true
-  },
-  "profiles": {
-    "enabled": true
-  },
-  "music": {
+  "screensaver": {
     "enabled": false,
-    "effect": "spectrum"
+    "effect": 4
   }
 }

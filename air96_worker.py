@@ -2,8 +2,8 @@
 """Persistent NDJSON worker for the Air96 Omarchy plugin.
 
 One process serves every monitor. Theme changes come from inotify on the
-active Omarchy theme directory. Modifier state is optional and only records
-Shift, Ctrl, Alt, and Super.
+active Omarchy theme directory. The screensaver light show follows
+org.omarchy.screensaver.
 """
 
 import ctypes
@@ -17,13 +17,11 @@ import subprocess
 import sys
 import time
 
-from air96_audio import MusicSession
 from air96_backend import Backend, file_lock
-from air96_binds import parse_hyprctl_binds
 from air96_ha import HomeAssistantError
-from air96_hid import EvdevModifiers, HidError, HidTransport, find_devices, find_event_nodes
-from air96_profiles import ProfileError
+from air96_hid import HidError, HidTransport, find_devices
 from air96_protocol import ProtocolError
+from air96_screensaver import screensaver_running
 from air96_theme import THEME_DIR
 
 FALLBACK_SECONDS = 60
@@ -44,11 +42,16 @@ def execute(backend, request):
             backend.apply_keymap(config.get("changes"))
         elif action == "settings":
             backend.update_settings(config)
+            if backend.transport is not None and any(key in config for key in ("lighting", "screensaver")):
+                backend.applied_signature = ""
+                backend.apply_lighting(force=True)
+            elif "home_assistant" in config and backend.config["home_assistant"]["enabled"]:
+                backend.push_home_assistant()
         elif action == "ha-push":
             backend.push_home_assistant()
         elif action != "status":
             raise ValueError("Unknown action")
-    except (ValueError, ProtocolError, HomeAssistantError, ProfileError, HidError, OSError, TimeoutError) as exc:
+    except (ValueError, ProtocolError, HomeAssistantError, HidError, OSError, TimeoutError) as exc:
         backend.error = str(exc)[:600]
     return backend.snapshot(include_keymap=action.startswith("keymap"))
 
@@ -88,17 +91,7 @@ def _close_transport(backend):
 
 
 def refresh_binds(backend):
-    try:
-        result = subprocess.run(["hyprctl", "binds", "-j"], capture_output=True, timeout=2, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    if result.returncode != 0:
-        return False
-    try:
-        backend.binds = parse_hyprctl_binds(result.stdout.decode("utf-8", errors="replace"))
-    except ValueError:
-        return False
-    return True
+    return False
 
 
 def refresh_window(backend):
@@ -188,7 +181,6 @@ class HyprEvents:
                 backend.submap = payload
                 changed = True
             elif event == "configreloaded":
-                refresh_binds(backend)
                 changed = True
         if closed:
             # Parse first. close() drops a partial line from the dead socket.
@@ -276,10 +268,8 @@ def worker_revision():
     return _REVISION
 
 
-def publish_worker(backend, session):
-    """Heartbeat so `status` can see the process that actually drives the keys."""
-    capture = getattr(session, "capture", None)
-    levels = getattr(session, "last_levels", None) or {}
+def publish_worker(backend):
+    """Heartbeat so `status` can see the process that drives the keyboard."""
     script = Path(__file__).resolve()
     payload = {
         "pid": os.getpid(),
@@ -287,17 +277,10 @@ def publish_worker(backend, session):
         "root": str(script.parent),
         "revision": worker_revision(),
         "updated": time.time(),
-        "pushConfigured": bool(backend.config["per_key"]["push_to_keyboard"]),
+        "followTheme": bool(backend.config["lighting"]["follow_theme"]),
+        "screensaver": bool(backend.config["screensaver"]["enabled"]),
+        "screensaverActive": bool(backend.screensaver_active),
         "perKey": bool(backend.per_key),
-        "musicEnabled": bool(backend.config["music"]["enabled"]),
-        "musicError": backend.music_error,
-        "musicRunning": bool(getattr(session, "running", False)),
-        "recorder": list(getattr(capture, "command", []) or []),
-        "stalled": bool(getattr(capture, "stalled", False)),
-        "bytes": int(getattr(capture, "bytes_total", 0) or 0),
-        "rms": levels.get("rms") if isinstance(levels, dict) else None,
-        "silent": levels.get("silent") if isinstance(levels, dict) else None,
-        "held": backend.held,
     }
     path = backend.state_dir / "worker.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -306,95 +289,21 @@ def publish_worker(backend, session):
     temporary.replace(path)
 
 
-def drive_lights(backend, session, state, now):
-    """Resend highlights before the firmware timeout, and stream music frames."""
+def drive_lights(backend, state, now):
+    """Switch the RGB effect when the Omarchy screensaver starts or stops."""
     backend.reload_if_external()
-    music = bool(backend.config["music"]["enabled"])
-    pushing = bool(backend.config["per_key"]["push_to_keyboard"] and backend.per_key and backend.transport)
-    if music:
-        if state["music"] and not session.running:
-            state["music"] = False
-            state["retry"] = now + 2
-        if not state["music"]:
-            if now < state["retry"]:
-                return
-            try:
-                session.start()
-            except OSError as exc:
-                backend.music_error = str(exc)[:300]
-                state["retry"] = now + 2
-                return
-            state["music"] = True
-            backend.music_error = ""
-        try:
-            levels = session.poll()
-        except OSError as exc:
-            backend.music_error = str(exc)[:300]
-            levels = None
-        if session.error:
-            backend.music_error = session.error
-        elif levels is not None:
-            backend.music_error = ""
-        interval = 0.05 if backend.per_key else 0.25
-        if levels is not None and now - state["last_music"] >= interval:
-            try:
-                with file_lock(backend.state_dir):
-                    backend.push_music(levels)
-            except (ProtocolError, OSError, HidError, TimeoutError) as exc:
-                backend.music_error = str(exc)[:300]
-            state["last_music"] = now
-        elif pushing and levels is None and now - backend.last_direct >= 0.4:
-            # Not enough PCM yet. A probe holds the overlay. A gap longer than
-            # 2 seconds, or a clear (0xA8), is what flashes the normal effect back.
-            try:
-                with file_lock(backend.state_dir):
-                    backend.keepalive_overlay()
-            except (ProtocolError, OSError, HidError, TimeoutError) as exc:
-                backend.music_error = str(exc)[:300]
-        state["push"] = pushing
+    if now - state.get("screen", 0) < 1:
         return
-    if state["music"]:
-        session.stop()
-        try:
-            with file_lock(backend.state_dir):
-                backend.release_overlay()
-        except (ProtocolError, OSError, HidError, TimeoutError, ValueError) as exc:
-            # Stay in the music-off attempt. Marking it finished here is what
-            # left the overlay cleared and the highlight loop not running.
-            backend.error = str(exc)[:300]
-            state["push"] = pushing
-            return
-        state["music"] = False
-        state["last_mods"] = 0
-    if state["push"] and not pushing and backend.frame_kind == "highlight":
-        try:
-            with file_lock(backend.state_dir):
-                backend.clear_per_key()
-                if backend.transport is not None:
-                    backend.apply_lighting(force=True, push_ha=False)
-        except (ProtocolError, OSError, HidError, TimeoutError) as exc:
-            backend.error = str(exc)[:300]
-    state["push"] = pushing
-    pushed = False
-    if pushing and now - state.get("last_mods", 0) >= 0.08:
-        state["last_mods"] = now
-        mods = backend.read_keyboard_mods()
-        if mods is not None and mods != backend.held:
-            try:
-                with file_lock(backend.state_dir):
-                    backend.push_per_key()
-                pushed = True
-            except (ProtocolError, OSError, HidError, TimeoutError) as exc:
-                backend.error = str(exc)[:300]
-    # frame_kind stays "music" or "" when the restore did not paint. Do not
-    # wait out the 0.9s keepalive; that gap is long enough for the overlay
-    # timeout to drop Super and not put it back.
-    if pushing and not pushed and (backend.frame_kind != "highlight" or now - backend.last_direct >= 0.9):
-        try:
-            with file_lock(backend.state_dir):
-                backend.push_per_key()
-        except (ProtocolError, OSError, HidError, TimeoutError) as exc:
-            backend.error = str(exc)[:300]
+    state["screen"] = now
+    try:
+        running = screensaver_running()
+    except OSError:
+        running = False
+    try:
+        with file_lock(backend.state_dir):
+            backend.note_screensaver(running)
+    except (ProtocolError, OSError, HidError, TimeoutError, ValueError) as exc:
+        backend.error = str(exc)[:300]
 
 
 def serve(backend=None, stdin=None):
@@ -410,36 +319,22 @@ def serve(backend=None, stdin=None):
         except BlockingIOError as exc:
             raise RuntimeError("An Air96 worker is already running") from exc
         refresh_device(backend)
-        refresh_binds(backend)
-        refresh_window(backend)
         if backend.config["lighting"]["follow_theme"] and backend.transport is not None:
             with file_lock(backend.state_dir):
                 execute(backend, {"action": "sync", "config": {"force": True}})
         selector = selectors.DefaultSelector()
         selector.register(source, selectors.EVENT_READ, "input")
         watcher = None
-        hypr = HyprEvents()
-        modifiers = EvdevModifiers()
         try:
             watcher = ThemeWatch(backend.theme_path or THEME_DIR)
             selector.register(watcher.fd, selectors.EVENT_READ, "watch")
         except OSError:
             watcher = None
-        if hypr.connect():
-            selector.register(hypr.socket, selectors.EVENT_READ, "hypr")
-        if backend.config["modifiers"]["enabled"]:
-            opened = modifiers.open_nodes(find_event_nodes())
-            backend.modifier_permission = modifiers.permission
-            for fd in opened:
-                selector.register(fd, selectors.EVENT_READ, "keys")
-        else:
-            backend.modifier_permission = ""
         pending = set()
         deadline = None
         buffer = b""
         next_discovery = time.monotonic() + FALLBACK_SECONDS
-        session = MusicSession()
-        light_state = {"music": False, "push": False, "last_music": 0.0, "retry": 0.0}
+        light_state = {"screen": 0.0}
 
         def emit(request):
             with file_lock(backend.state_dir):
@@ -451,10 +346,6 @@ def serve(backend=None, stdin=None):
         emit({"action": "status"})
         while True:
             timeout = 1.0
-            if backend.config["music"]["enabled"]:
-                timeout = 0.05
-            elif backend.config["per_key"]["push_to_keyboard"] and backend.per_key:
-                timeout = 0.5
             if deadline is not None:
                 timeout = min(timeout, max(0, deadline - time.monotonic()))
             timeout = min(timeout, max(0, next_discovery - time.monotonic()))
@@ -464,24 +355,10 @@ def serve(backend=None, stdin=None):
                     pending.update(watcher.drain())
                     if pending and deadline is None:
                         deadline = time.monotonic() + 0.2
-                elif key.data == "hypr":
-                    if hypr.drain(backend):
-                        pending.add("highlight")
-                        if deadline is None:
-                            deadline = time.monotonic() + 0.05
-                elif key.data == "keys":
-                    if modifiers.drain():
-                        backend.held = modifiers.mask
-                        pending.add("highlight")
-                        if deadline is None:
-                            deadline = time.monotonic() + 0.05
                 else:
                     chunk = os.read(source.fileno(), MAX_REQUEST)
                     if not chunk:
-                        session.stop()
                         _close_transport(backend)
-                        modifiers.close()
-                        hypr.close()
                         if watcher:
                             watcher.close()
                         return
@@ -510,35 +387,27 @@ def serve(backend=None, stdin=None):
                 if "device" in pending:
                     refresh_device(backend)
                 if "theme" in pending or "device" in pending:
+                    ha = backend.config["home_assistant"]
                     if backend.config["lighting"]["follow_theme"]:
                         emit({"action": "sync"})
+                    elif ha["enabled"] and ha["follow_theme"]:
+                        emit({"action": "ha-push"})
                     else:
                         emit({"action": "status"})
-                elif "highlight" in pending:
-                    if backend.config["per_key"]["push_to_keyboard"] and backend.per_key:
-                        try:
-                            with file_lock(backend.state_dir):
-                                backend.push_per_key()
-                        except (ProtocolError, OSError, HidError) as exc:
-                            backend.error = str(exc)[:600]
-                    emit({"action": "status"})
                 pending.clear()
                 deadline = None
                 if watcher:
                     watcher.arm()
             if now >= next_discovery:
                 refresh_device(backend)
-                refresh_binds(backend)
                 if watcher:
                     watcher.arm()
                 if backend.config["lighting"]["follow_theme"] and backend.transport is not None and not backend.applied_signature:
                     emit({"action": "sync"})
                 next_discovery = now + FALLBACK_SECONDS
-                if hypr.socket is None and hypr.connect():
-                    selector.register(hypr.socket, selectors.EVENT_READ, "hypr")
-            drive_lights(backend, session, light_state, now)
+            drive_lights(backend, light_state, now)
             try:
-                publish_worker(backend, session)
+                publish_worker(backend)
             except OSError:
                 pass
 

@@ -27,9 +27,10 @@ Controls.ScrollView {
   property bool haEnabled: false
   property bool haSyncBrightness: false
   property bool haOnlyWhenOn: true
-  property bool modifierListen: false
-  property bool pushKeys: false
-  property bool musicOn: false
+  property string haHex: "#ffffff"
+  property int haBrightness: 180
+  property bool haFollow: true
+  property bool screensaverOn: false
   implicitHeight: body.implicitHeight
   contentWidth: availableWidth
   clip: true
@@ -57,10 +58,13 @@ Controls.ScrollView {
     haEnabled = !!ha.enabled
     haSyncBrightness = !!ha.syncBrightness
     haOnlyWhenOn = ha.onlyWhenOn !== false
-    modifierListen = !!(snapshot.modifiers && snapshot.modifiers.enabled)
-    pushKeys = !!(snapshot.perKey && snapshot.perKey.push)
-    musicOn = !!(snapshot.music && snapshot.music.enabled)
+    haHex = ha.hex || "#ffffff"
+    haBrightness = ha.brightness === undefined ? 180 : ha.brightness
+    haFollow = ha.followTheme !== false
+    screensaverOn = !!(snapshot.screensaver && snapshot.screensaver.enabled)
     loaded = true
+    if (keyboardColor) keyboardColor.setColor(hex)
+    if (lampColor) lampColor.setColor(haHex)
   }
 
   function selectedKey() {
@@ -80,15 +84,12 @@ Controls.ScrollView {
     var rows = snapshot.layout || []
     var keys = service && service.keymap && service.keymap.keys ? service.keymap.keys : ({})
     var drafts = service && service.drafts ? service.drafts : ({})
-    var highlights = snapshot.highlights || ({})
     for (var i = 0; i < rows.length; i++) {
       var key = rows[i]
       var address = layer + ":" + key.row + ":" + key.col
       var current = keys[address]
       var draft = drafts[address]
-      var highlight = highlights[key.id]
-      if (tab === "binds" && highlight && highlight.label) labels[key.id] = String(highlight.label).slice(0, 8)
-      else if (draft) labels[key.id] = "•"
+      if (draft) labels[key.id] = "•"
       else if (current) labels[key.id] = current.short || current.name
       else labels[key.id] = key.label
     }
@@ -159,8 +160,7 @@ Controls.ScrollView {
       Repeater {
         model: [
           {id: "lighting", label: "Lighting"},
-          {id: "keys", label: "Keys"},
-          {id: "binds", label: "Binds"}
+          {id: "keys", label: "Keys"}
         ]
         delegate: Ui.Button {
           required property var modelData
@@ -181,45 +181,59 @@ Controls.ScrollView {
       Layout.fillWidth: true
       Layout.preferredHeight: root.preferredWidth * 6 / 19
       layout: root.snapshot.layout || []
-      highlights: root.snapshot.highlights || ({})
       labels: root.diagramLabels()
       selected: root.selectedId
-      showHighlights: root.tab === "binds"
       onKeyClicked: function(id) { root.selectedId = id }
     }
 
     ColumnLayout {
+      id: lightingPage
       visible: root.tab === "lighting"
       Layout.fillWidth: true
       spacing: Commons.Style.space(6)
-      Ui.Dropdown {
-        Layout.fillWidth: true
-        label: "Effect"
-        value: String(root.effectIndex)
-        options: (root.snapshot.effects || []).map(function(item) { return {value: String(item.id), label: item.name} })
-        onChanged: function(value) { root.effectIndex = parseInt(value, 10) }
+      function sendKeyboard() {
+        if (!root.service) return
+        root.service.request("apply", {
+          brightness: root.brightness, speed: root.speed, hex: root.hex, follow_theme: root.follow
+        })
       }
-      RowLayout {
-        Layout.fillWidth: true
-        Rectangle {
-          implicitWidth: Commons.Style.space(28)
-          implicitHeight: Commons.Style.space(28)
-          radius: Commons.Style.space(4)
-          color: /^#[0-9a-fA-F]{6}$/.test(root.hex) ? root.hex : "transparent"
-          border.color: Commons.Color.muted
-          border.width: 1
-        }
-        Ui.TextField {
-          Layout.fillWidth: true
-          text: root.hex
-          placeholderText: "#RRGGBB"
-          maximumLength: 9
-          foreground: Commons.Color.popups.text
-          selectByMouse: true
-          onTextEdited: { root.hex = text; root.follow = false }
-        }
+      function sendLamp() {
+        if (!root.service) return
+        root.service.request("settings", {home_assistant: {
+          enabled: root.haEnabled, url: root.haUrl, hex: root.haHex, brightness: root.haBrightness,
+          follow_theme: root.haFollow, sync_brightness: root.haSyncBrightness, only_when_on: root.haOnlyWhenOn,
+          entities: root.haEntities.split(",").map(function(item) { return item.trim() }).filter(function(item) { return item.length > 0 })
+        }})
       }
-      PlainText { text: "Brightness " + root.brightness }
+      Ui.Toggle {
+        Layout.fillWidth: true
+        label: "Keyboard follows the Omarchy theme"
+        checked: root.follow
+        foreground: Commons.Color.popups.text
+        onClicked: { root.follow = !root.follow; parent.sendKeyboard() }
+      }
+      PlainText {
+        visible: root.follow
+        text: "Theme color " + (root.snapshot.theme || "not found") + ". Brightness still applies."
+      }
+      ColorPicker {
+        id: keyboardColor
+        visible: !root.follow
+        Layout.fillWidth: true
+        onPicked: function(next) { root.hex = next }
+        onVisibleChanged: if (visible) setColor(root.hex)
+      }
+      Ui.TextField {
+        visible: !root.follow
+        Layout.fillWidth: true
+        text: root.hex
+        placeholderText: "#RRGGBB"
+        maximumLength: 9
+        foreground: Commons.Color.popups.text
+        selectByMouse: true
+        onTextEdited: { root.hex = text; keyboardColor.setColor(text) }
+      }
+      PlainText { text: "Keyboard brightness " + root.brightness }
       LightingSlider {
         Layout.fillWidth: true
         bar: popupPalette
@@ -230,60 +244,30 @@ Controls.ScrollView {
         knobColor: activeFocus ? Commons.Color.accent : Commons.Color.popups.text
         onMoved: function(value) { root.brightness = value }
       }
-      PlainText { text: "Speed " + root.speed }
-      LightingSlider {
-        Layout.fillWidth: true
-        bar: popupPalette
-        scrollView: root
-        minimum: 0; maximum: 255; step: 1; integer: true
-        value: root.speed
-        fillColor: Commons.Color.accent
-        knobColor: activeFocus ? Commons.Color.accent : Commons.Color.popups.text
-        onMoved: function(value) { root.speed = value }
-      }
       Ui.Toggle {
         Layout.fillWidth: true
-        label: "Follow the Omarchy theme"
-        checked: root.follow
+        label: "Light show while the screensaver is on"
+        checked: root.screensaverOn
         foreground: Commons.Color.popups.text
-        onClicked: root.follow = !root.follow
-      }
-      Ui.Toggle {
-        visible: root.follow
-        Layout.fillWidth: true
-        label: "Use solid color while following"
-        checked: root.solidFollow
-        foreground: Commons.Color.popups.text
-        onClicked: root.solidFollow = !root.solidFollow
+        onClicked: {
+          root.screensaverOn = !root.screensaverOn
+          if (root.service) root.service.request("settings", {screensaver: {enabled: root.screensaverOn}})
+        }
       }
       PlainText {
         Layout.fillWidth: true
         font.pixelSize: Commons.Style.font.caption
         opacity: 0.75
-        text: "Theme " + (root.snapshot.theme || "not found") + ". keyboard.rgb wins over the colors.toml accent, including a bare hex such as Tokyo Night's ff00ff. Follow stays off until you turn it on."
+        text: "The whole board is one solid color. Screensaver uses the Breathing effect in that color and restores the solid color when org.omarchy.screensaver exits. It is not written to EEPROM."
       }
-      RowLayout {
+      Ui.Button {
         Layout.fillWidth: true
-        Ui.Button {
-          Layout.fillWidth: true
-          text: root.service && root.service.actionBusy ? "Working" : "Apply lighting"
-          enabled: root.service && root.service.ready && !root.service.actionBusy
-          bordered: true
-          focusable: true
-          foreground: Commons.Color.popups.text
-          onClicked: root.service.request("apply", {
-            effect: root.effectIndex, brightness: root.brightness, speed: root.speed,
-            hex: root.hex, follow_theme: root.follow, solid_when_following: root.solidFollow
-          })
-        }
-        Ui.Button {
-          Layout.fillWidth: true
-          text: "Sync theme"
-          enabled: root.service && root.service.ready && !root.service.actionBusy
-          focusable: true
-          foreground: Commons.Color.popups.text
-          onClicked: root.service.request("sync", {force: true})
-        }
+        text: root.service && root.service.actionBusy ? "Working" : "Apply keyboard"
+        enabled: root.service && root.service.ready && !root.service.actionBusy
+        bordered: true
+        focusable: true
+        foreground: Commons.Color.popups.text
+        onClicked: parent.sendKeyboard()
       }
 
       PlainText { text: "Home Assistant"; font.bold: true }
@@ -311,31 +295,67 @@ Controls.ScrollView {
       }
       Ui.Toggle {
         Layout.fillWidth: true
-        label: "Push color to these lights"
-        checked: root.haEnabled
+        label: "Lamp follows the Omarchy theme"
+        checked: root.haFollow
         foreground: Commons.Color.popups.text
-        onClicked: root.haEnabled = !root.haEnabled
+        onClicked: { root.haFollow = !root.haFollow; parent.sendLamp() }
+      }
+      ColorPicker {
+        id: lampColor
+        visible: !root.haFollow
+        Layout.fillWidth: true
+        onPicked: function(next) { root.haHex = next }
+        onVisibleChanged: if (visible) setColor(root.haHex)
+      }
+      Ui.TextField {
+        visible: !root.haFollow
+        Layout.fillWidth: true
+        text: root.haHex
+        placeholderText: "#RRGGBB"
+        maximumLength: 9
+        foreground: Commons.Color.popups.text
+        selectByMouse: true
+        onTextEdited: { root.haHex = text; lampColor.setColor(text) }
+      }
+      PlainText { text: "Lamp brightness " + root.haBrightness }
+      LightingSlider {
+        Layout.fillWidth: true
+        bar: popupPalette
+        scrollView: root
+        minimum: 0; maximum: 255; step: 1; integer: true
+        value: root.haBrightness
+        fillColor: Commons.Color.accent
+        knobColor: activeFocus ? Commons.Color.accent : Commons.Color.popups.text
+        onMoved: function(value) { root.haBrightness = value }
       }
       Ui.Toggle {
         Layout.fillWidth: true
-        label: "Also set brightness"
+        label: "Push color to the lamp"
+        checked: root.haEnabled
+        foreground: Commons.Color.popups.text
+        onClicked: { root.haEnabled = !root.haEnabled; parent.sendLamp() }
+      }
+      Ui.Toggle {
+        visible: root.haFollow
+        Layout.fillWidth: true
+        label: "Also set lamp brightness while following the theme"
         checked: root.haSyncBrightness
         foreground: Commons.Color.popups.text
-        onClicked: root.haSyncBrightness = !root.haSyncBrightness
+        onClicked: { root.haSyncBrightness = !root.haSyncBrightness; parent.sendLamp() }
       }
       Ui.Toggle {
         Layout.fillWidth: true
         label: "Only when the light is already on"
         checked: root.haOnlyWhenOn
         foreground: Commons.Color.popups.text
-        onClicked: root.haOnlyWhenOn = !root.haOnlyWhenOn
+        onClicked: { root.haOnlyWhenOn = !root.haOnlyWhenOn; parent.sendLamp() }
       }
       PlainText {
         Layout.fillWidth: true
         font.pixelSize: Commons.Style.font.caption
         opacity: 0.75
         wrapMode: Text.WordWrap
-        text: "Color only, so the lamp keeps its brightness. Home Assistant turn_on turns a light on; an off light is skipped while Only when the light is already on is enabled."
+        text: "While the lamp follows the theme, its own brightness stays unless Also set lamp brightness is on. A chosen color always sends the lamp brightness. An off light is skipped while Only when the light is already on is enabled. The token is never shown."
       }
       RowLayout {
         Layout.fillWidth: true
@@ -344,11 +364,7 @@ Controls.ScrollView {
           text: "Save lights"
           focusable: true
           foreground: Commons.Color.popups.text
-          onClicked: root.service && root.service.request("settings", {home_assistant: {
-            enabled: root.haEnabled, url: root.haUrl,
-            sync_brightness: root.haSyncBrightness, only_when_on: root.haOnlyWhenOn,
-            entities: root.haEntities.split(",").map(function(item) { return item.trim() }).filter(function(item) { return item.length > 0 })
-          }})
+          onClicked: lightingPage.sendLamp()
         }
         Ui.Button {
           Layout.fillWidth: true
@@ -445,70 +461,7 @@ Controls.ScrollView {
         Layout.fillWidth: true
         font.pixelSize: Commons.Style.font.caption
         opacity: 0.75
-        text: root.snapshot.backup ? ("Recovery copy " + root.snapshot.backup) : "Apply writes only staged keys, after a JSON backup. Factory defaults cannot be read over VIA, and this plugin never resets EEPROM."
-      }
-    }
-
-    ColumnLayout {
-      visible: root.tab === "binds"
-      Layout.fillWidth: true
-      spacing: Commons.Style.space(6)
-      PlainText {
-        Layout.fillWidth: true
-        text: {
-          var profile = root.snapshot.profile || ({})
-          var held = (root.snapshot.modifiers && root.snapshot.modifiers.heldNames || []).join("+") || "none"
-          var app = profile.name || profile.windowClass || "no matching profile"
-          return "Focused " + app + ". Held modifiers: " + held + ". Dim keys are Super binds. Holding Super lights only the keys that finish a bind."
-        }
-      }
-      PlainText {
-        Layout.fillWidth: true
-        font.pixelSize: Commons.Style.font.caption
-        opacity: 0.75
-        text: (root.snapshot.perKey && root.snapshot.perKey.reason) || ""
-      }
-      PlainText {
-        Layout.fillWidth: true
-        font.pixelSize: Commons.Style.font.caption
-        opacity: 0.75
-        text: (root.snapshot.modifiers && root.snapshot.modifiers.permission) || "Super highlights use the modifier mask the keyboard reports. The input udev rule is optional and is not required."
-      }
-      Ui.Toggle {
-        Layout.fillWidth: true
-        label: "Listen for Shift, Ctrl, Alt, and Super"
-        checked: root.modifierListen
-        foreground: Commons.Color.popups.text
-        onClicked: {
-          root.modifierListen = !root.modifierListen
-          if (root.service) root.service.request("settings", {modifiers: {enabled: root.modifierListen}})
-        }
-      }
-      Ui.Toggle {
-        Layout.fillWidth: true
-        label: "Push per-key colors when firmware allows it"
-        checked: root.pushKeys
-        foreground: Commons.Color.popups.text
-        onClicked: {
-          root.pushKeys = !root.pushKeys
-          if (root.service) root.service.request("settings", {per_key: {push_to_keyboard: root.pushKeys, enabled: true}})
-        }
-      }
-      Ui.Toggle {
-        Layout.fillWidth: true
-        label: "Music lighting"
-        checked: root.musicOn
-        foreground: Commons.Color.popups.text
-        onClicked: {
-          root.musicOn = !root.musicOn
-          if (root.service) root.service.request("settings", {music: {enabled: root.musicOn}})
-        }
-      }
-      PlainText {
-        Layout.fillWidth: true
-        font.pixelSize: Commons.Style.font.caption
-        opacity: 0.75
-        text: (root.snapshot.music && root.snapshot.music.error) || "Music follows the PipeWire or PulseAudio monitor. Custom firmware paints each key. Stock firmware pulses the VIA color about four times a second and does not save that pulse."
+        text: root.snapshot.backup ? ("Recovery copy " + root.snapshot.backup) : "Click a key on the Air96 picture, search a keycode, then Apply. The picture is the 96% layout, the same idea as the Air75 map in fldc/omarchy-nuphy. Apply writes only staged keys, after a JSON backup."
       }
     }
   }
